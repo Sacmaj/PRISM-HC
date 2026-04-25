@@ -119,6 +119,39 @@ class TestSyntheticScaffold(unittest.TestCase):
             rid.bootstrap_pipeline(broken, B=4, block_len=8)
         self.assertIn("alpha_t_for_e", str(ctx.exception))
 
+    def test_bootstrap_pipeline_misaligned_e_tp1_raises(self) -> None:
+        # Excess-gate fit also reuses idx_e on e_tp1; same IndexError risk.
+        data, _ = rid.make_synthetic_rebus_data(T=32, nx=2, seed=4)
+        broken = dict(data)
+        broken["e_tp1"] = np.asarray(data["e_tp1"], dtype=float)[:-1]
+        with self.assertRaises(ValueError) as ctx:
+            rid.bootstrap_pipeline(broken, B=4, block_len=8)
+        self.assertIn("e_tp1", str(ctx.exception))
+
+    def test_bootstrap_pipeline_misaligned_omega_t_raises(self) -> None:
+        # Alpha-gate branch: idx_a is drawn from len(alpha_t) and reused on
+        # alpha_tp1 / omega_t / chi_t. omega_t shorter must surface as ValueError.
+        data, _ = rid.make_synthetic_rebus_data(T=32, nx=2, seed=4)
+        broken = dict(data)
+        broken["omega_t"] = np.asarray(data["omega_t"], dtype=float)[:-1]
+        with self.assertRaises(ValueError) as ctx:
+            rid.bootstrap_pipeline(broken, B=4, block_len=8)
+        msg = str(ctx.exception)
+        self.assertIn("omega_t", msg)
+        self.assertIn("alpha_t", msg)
+
+    def test_bootstrap_pipeline_misaligned_nu_t_for_b_raises(self) -> None:
+        # Budget branch: idx_b is drawn from len(strain_delta_t) and reused on
+        # alpha_t_for_b / nu_t_for_b. nu_t_for_b shorter must surface as ValueError.
+        data, _ = rid.make_synthetic_rebus_data(T=32, nx=2, seed=4)
+        broken = dict(data)
+        broken["nu_t_for_b"] = np.asarray(data["nu_t_for_b"], dtype=float)[:-1]
+        with self.assertRaises(ValueError) as ctx:
+            rid.bootstrap_pipeline(broken, B=4, block_len=8)
+        msg = str(ctx.exception)
+        self.assertIn("nu_t_for_b", msg)
+        self.assertIn("strain_delta_t", msg)
+
     def test_smoke_test_contract_without_solver(self) -> None:
         result = rid.synthetic_smoke_test(T=24, nx=2, B=4, block_len=8)
         self.assertIn(result["status"], {"passed", "skipped_no_cvxpy"})

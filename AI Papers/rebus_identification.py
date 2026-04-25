@@ -136,6 +136,31 @@ def _validate_same_time_length(*arrays: np.ndarray) -> int:
     return lengths[0]
 
 
+def _validate_paired_lengths(
+    reference_len: int,
+    reference_name: str,
+    paired: Mapping[str, ArrayLike],
+) -> None:
+    """Raise ValueError if any paired 1-D series doesn't match reference_len.
+
+    Used by bootstrap_pipeline to surface array-alignment errors as clear
+    contract violations instead of mid-loop np.take IndexErrors when bootstrap
+    indices drawn from `reference_name` are reused on shorter paired series.
+    """
+    bad = {
+        name: len(_as_1d(arr))
+        for name, arr in paired.items()
+        if len(_as_1d(arr)) != reference_len
+    }
+    if bad:
+        details = ", ".join(f"{n}(T={ln})" for n, ln in sorted(bad.items()))
+        raise ValueError(
+            f"Series sharing bootstrap indices with "
+            f"{reference_name}(T={reference_len}) have mismatched lengths: "
+            f"{details}"
+        )
+
+
 
 def _safe_quantile(values: Sequence[float], q: float) -> float:
     vals = np.asarray(values, dtype=float)
@@ -551,19 +576,37 @@ def bootstrap_pipeline(
     T_e = len(_as_1d(data["e_t"]))
     T_b = len(_as_1d(data["strain_delta_t"]))
 
-    # idx_e is derived from T_e and reused to bootstrap nu_t and alpha_t_for_e
-    # in fit_kappa_quantile below. If those arrays are shorter than e_t (a
-    # plausible outcome when nu_t is derived with a one-step lag), bootstrap_take
-    # would raise a low-level np.take IndexError mid-loop. Validate up front so
-    # the failure surfaces as a clear input-contract error instead.
-    T_k = len(_as_1d(data["nu_t"]))
-    T_k_alpha = len(_as_1d(data["alpha_t_for_e"]))
-    if T_k != T_e or T_k_alpha != T_e:
-        raise ValueError(
-            f"data['nu_t'] (T={T_k}), data['alpha_t_for_e'] (T={T_k_alpha}), "
-            f"and data['e_t'] (T={T_e}) must share the same time length; "
-            "fit_kappa_quantile bootstraps both with indices drawn from T_e."
-        )
+    # idx_a / idx_e / idx_b are drawn from T_a / T_e / T_b and reused on every
+    # paired series fed into fit_*_gate below. A shorter paired series would
+    # otherwise hit np.take IndexError mid-loop inside bootstrap_take, surfacing
+    # as an opaque, intermittent crash. Validate every paired length up front
+    # so misalignment becomes a clear input-contract error.
+    _validate_paired_lengths(
+        T_a,
+        "alpha_t",
+        {
+            "alpha_tp1": data["alpha_tp1"],
+            "omega_t": data["omega_t"],
+            "chi_t": data["chi_t"],
+        },
+    )
+    _validate_paired_lengths(
+        T_e,
+        "e_t",
+        {
+            "e_tp1": data["e_tp1"],
+            "alpha_t_for_e": data["alpha_t_for_e"],
+            "nu_t": data["nu_t"],
+        },
+    )
+    _validate_paired_lengths(
+        T_b,
+        "strain_delta_t",
+        {
+            "alpha_t_for_b": data["alpha_t_for_b"],
+            "nu_t_for_b": data["nu_t_for_b"],
+        },
+    )
 
     for _ in range(B):
         idx_H = moving_block_indices(T_H, block_len, rng)
