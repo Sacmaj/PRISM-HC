@@ -46,11 +46,17 @@ class NullSpaceAdapter:
         eta_w: float,
         commit_cost: float,
     ) -> None:
-        """SGD commit scaled by eta_w * E. Drains priming P by commit_cost."""
+        """SGD commit scaled by eta_w * E. Drains priming P by commit_cost.
+
+        Topology-cost signal: chi accumulates by commit_cost on each accept,
+        bounded to [0, 1]; the forward step decays it via exp_euler so the
+        supervisor reads a recoverable cost signal.
+        """
         E_scalar = float(state.E.mean().item())
         scale = eta_w * E_scalar
         for name, p in named_params.items():
             if name in grads_safe and p.requires_grad:
                 p.data.add_(grads_safe[name], alpha=-scale)
         state.P = torch.clamp(state.P - commit_cost, 0.0, 1.0)
+        state.chi = torch.clamp(state.chi + commit_cost, 0.0, 1.0)
         state.commits += 1

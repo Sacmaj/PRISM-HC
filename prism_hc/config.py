@@ -7,8 +7,9 @@ a single source of truth and can be re-tuned without code edits.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Any, Callable, Optional, Tuple
 
 
 @dataclass
@@ -28,6 +29,7 @@ class PrismConfig:
     lam_E: float = 0.10
     lam_S: float = 0.15
     lam_rho: float = 0.05
+    lam_chi: float = 0.05
 
     # LATCH gating thresholds
     S_min: float = 0.7
@@ -60,3 +62,40 @@ class PrismConfig:
     delta_l: Tuple[float, ...] = (0.30, 0.30)
     kappa_l: Tuple[float, ...] = (0.50, 0.50)
     log_pi_clamp: Tuple[float, float] = (-6.0, 6.0)
+
+    @classmethod
+    def from_rebus_synthesis(
+        cls,
+        gains: Any,
+        *,
+        gamma_map: Optional[Callable[[Any], Tuple[float, float, float]]] = None,
+        **overrides: Any,
+    ) -> "PrismConfig":
+        """Build PrismConfig from REBUS supervisor-gain synthesis output.
+
+        `gains` is duck-typed: it must expose `.p`, `.q`, `.delta_safe` (and
+        optionally `.Gamma`) attributes, matching the SupervisorGains dataclass
+        in AI Papers/rebus_identification.py.
+
+        The default mapping is a HEURISTIC, not a derivation. The synthesizer's
+        composite-Lyapunov coefficients (p, q, delta_safe, Gamma) and the
+        REBUS-update forcing-term coefficients (gamma_s, gamma_d, gamma_eps)
+        are mathematically distinct objects. Default:
+
+            (gamma_s, gamma_d, gamma_eps) = (0.5/p, 0.5/q, 0.5*delta_safe)
+
+        Override via `gamma_map=lambda g: (...)` if you have a principled
+        relationship in mind. `Gamma` has no current home in PrismConfig and
+        is dropped on the floor; revisit if/when supervisor-gain enforcement
+        gets wired into LATCH.
+        """
+        if gamma_map is None:
+            gamma_map = lambda g: (0.5 / g.p, 0.5 / g.q, 0.5 * g.delta_safe)
+        gs, gd, ge = gamma_map(gains)
+        return dataclasses.replace(
+            cls(),
+            gamma_s=float(gs),
+            gamma_d=float(gd),
+            gamma_eps=float(ge),
+            **overrides,
+        )
