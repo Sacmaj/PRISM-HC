@@ -7,9 +7,8 @@ a single source of truth and can be re-tuned without code edits.
 
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, Union
 
 
 @dataclass
@@ -58,10 +57,31 @@ class PrismConfig:
     lam_h: float = 0.03
     eta_h: float = 0.05
 
-    # Precision modulation per-layer
-    delta_l: Tuple[float, ...] = (0.30, 0.30)
-    kappa_l: Tuple[float, ...] = (0.50, 0.50)
+    # Precision modulation per-layer. Accepts a scalar (broadcast to all L
+    # layers), a 1-tuple (broadcast), or a tuple of length L; normalized to a
+    # length-L tuple by __post_init__.
+    delta_l: Union[float, Tuple[float, ...]] = 0.30
+    kappa_l: Union[float, Tuple[float, ...]] = 0.50
     log_pi_clamp: Tuple[float, float] = (-6.0, 6.0)
+
+    def __post_init__(self) -> None:
+        self.delta_l = self._normalize_per_layer("delta_l", self.delta_l)
+        self.kappa_l = self._normalize_per_layer("kappa_l", self.kappa_l)
+
+    def _normalize_per_layer(
+        self, name: str, value: Union[float, Tuple[float, ...]]
+    ) -> Tuple[float, ...]:
+        if isinstance(value, (int, float)):
+            return (float(value),) * self.L
+        value = tuple(float(v) for v in value)
+        if len(value) == 1:
+            return value * self.L
+        if len(value) != self.L:
+            raise ValueError(
+                f"{name} has length {len(value)} but L={self.L}; "
+                f"pass a scalar, a 1-tuple, or a tuple of length L."
+            )
+        return value
 
     @classmethod
     def from_rebus_synthesis(
@@ -92,8 +112,12 @@ class PrismConfig:
         if gamma_map is None:
             gamma_map = lambda g: (0.5 / g.p, 0.5 / g.q, 0.5 * g.delta_safe)
         gs, gd, ge = gamma_map(gains)
-        return dataclasses.replace(
-            cls(),
+        # Build directly via cls() rather than dataclasses.replace(cls(), ...):
+        # the latter would copy already-normalized length-L=2 tuples for
+        # delta_l/kappa_l from the seed instance, then trip __post_init__'s
+        # length check if `overrides` raises L without also overriding
+        # delta_l/kappa_l.
+        return cls(
             gamma_s=float(gs),
             gamma_d=float(gd),
             gamma_eps=float(ge),

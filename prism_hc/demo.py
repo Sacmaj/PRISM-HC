@@ -66,7 +66,7 @@ def main() -> int:
         tele.append_step(rec)
         if t == 30:
             grads = {
-                name: torch.randn_like(p, generator=gen) * 0.01
+                name: torch.randn(p.shape, generator=gen, dtype=p.dtype, device=p.device) * 0.01
                 for name, p in model.named_parameters()
                 if p.requires_grad
             }
