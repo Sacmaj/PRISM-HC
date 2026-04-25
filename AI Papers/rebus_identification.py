@@ -551,6 +551,20 @@ def bootstrap_pipeline(
     T_e = len(_as_1d(data["e_t"]))
     T_b = len(_as_1d(data["strain_delta_t"]))
 
+    # idx_e is derived from T_e and reused to bootstrap nu_t and alpha_t_for_e
+    # in fit_kappa_quantile below. If those arrays are shorter than e_t (a
+    # plausible outcome when nu_t is derived with a one-step lag), bootstrap_take
+    # would raise a low-level np.take IndexError mid-loop. Validate up front so
+    # the failure surfaces as a clear input-contract error instead.
+    T_k = len(_as_1d(data["nu_t"]))
+    T_k_alpha = len(_as_1d(data["alpha_t_for_e"]))
+    if T_k != T_e or T_k_alpha != T_e:
+        raise ValueError(
+            f"data['nu_t'] (T={T_k}), data['alpha_t_for_e'] (T={T_k_alpha}), "
+            f"and data['e_t'] (T={T_e}) must share the same time length; "
+            "fit_kappa_quantile bootstraps both with indices drawn from T_e."
+        )
+
     for _ in range(B):
         idx_H = moving_block_indices(T_H, block_len, rng)
         idx_a = moving_block_indices(T_a, block_len, rng)

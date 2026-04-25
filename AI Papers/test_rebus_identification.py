@@ -96,6 +96,29 @@ class TestSyntheticScaffold(unittest.TestCase):
         with self.assertRaises(KeyError):
             rid.identify_rebus_bounds(broken, B=4, block_len=8)
 
+    def test_bootstrap_pipeline_misaligned_nu_t_raises(self) -> None:
+        # nu_t one sample shorter than e_t would otherwise hit a low-level
+        # np.take IndexError mid-loop in bootstrap_take. The pre-loop
+        # validation should turn that into a clear ValueError. Calling
+        # bootstrap_pipeline directly isolates the new check from any
+        # upstream errors raised by nominal fits in identify_rebus_bounds.
+        data, _ = rid.make_synthetic_rebus_data(T=32, nx=2, seed=4)
+        broken = dict(data)
+        broken["nu_t"] = np.asarray(data["nu_t"], dtype=float)[:-1]
+        with self.assertRaises(ValueError) as ctx:
+            rid.bootstrap_pipeline(broken, B=4, block_len=8)
+        msg = str(ctx.exception)
+        self.assertIn("nu_t", msg)
+        self.assertIn("e_t", msg)
+
+    def test_bootstrap_pipeline_misaligned_alpha_t_for_e_raises(self) -> None:
+        data, _ = rid.make_synthetic_rebus_data(T=32, nx=2, seed=4)
+        broken = dict(data)
+        broken["alpha_t_for_e"] = np.asarray(data["alpha_t_for_e"], dtype=float)[:-1]
+        with self.assertRaises(ValueError) as ctx:
+            rid.bootstrap_pipeline(broken, B=4, block_len=8)
+        self.assertIn("alpha_t_for_e", str(ctx.exception))
+
     def test_smoke_test_contract_without_solver(self) -> None:
         result = rid.synthetic_smoke_test(T=24, nx=2, B=4, block_len=8)
         self.assertIn(result["status"], {"passed", "skipped_no_cvxpy"})
