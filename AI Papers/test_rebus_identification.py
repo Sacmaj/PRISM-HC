@@ -101,6 +101,34 @@ class TestSyntheticScaffold(unittest.TestCase):
         self.assertIn(result["status"], {"passed", "skipped_no_cvxpy"})
         self.assertTrue(result["checks"]["required_keys_present"])
 
+    def test_estimate_homeostatic_center_median_does_not_require_cvxpy(self) -> None:
+        # The median branch is pure numpy; simulating cvxpy-absent must not
+        # regress to ImportError. Save/restore rid.cp around the call rather
+        # than deleting it, so other tests stay unaffected.
+        rng = np.random.default_rng(0)
+        Y = rng.normal(size=(3, 50))
+        saved_cp = rid.cp
+        try:
+            rid.cp = None
+            center = rid.estimate_homeostatic_center(Y, method="median")
+        finally:
+            rid.cp = saved_cp
+        self.assertEqual(center.shape, (3, 1))
+        self.assertTrue(np.all(np.isfinite(center)))
+        # Sanity: equal to numpy's coordinatewise median (keepdims).
+        self.assertTrue(np.allclose(center, np.median(Y, axis=1, keepdims=True)))
+
+    def test_estimate_homeostatic_center_huber_still_requires_cvxpy(self) -> None:
+        rng = np.random.default_rng(1)
+        Y = rng.normal(size=(2, 20))
+        saved_cp = rid.cp
+        try:
+            rid.cp = None
+            with self.assertRaises(ImportError):
+                rid.estimate_homeostatic_center(Y, method="huber")
+        finally:
+            rid.cp = saved_cp
+
     @unittest.skipIf(rid.cp is None, "cvxpy not installed")
     def test_end_to_end_smoke(self) -> None:
         result = rid.run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS")

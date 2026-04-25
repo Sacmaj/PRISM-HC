@@ -90,8 +90,17 @@ jobs:
 
       - name: Synthesis pipeline (asserts [pipeline] provenance, not [stub])
         run: |
+          # Pipe to tee so we keep the live log AND a file for grep below.
+          # Capture python's exit code via PIPESTATUS: a post-marker assert
+          # failure inside synthesis_demo would otherwise be masked by tee's
+          # zero exit, letting the grep below pass on stale output.
           python -m prism_hc.synthesis_demo | tee synth.out
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error::synthesis_demo exited with status $status"
+            exit "$status"
+          fi
           # Load-bearing assertion: if cvxpy install ever silently breaks, the
-          # demo would fall back to StubSupervisorGains and still print "OK".
+          # demo would fall back to StubSupervisorGains and still exit 0.
           # This grep ensures we actually exercised the real solver path.
           grep -q "^\[pipeline\]" synth.out || (echo "::error::synthesis_demo fell back to stub; pipeline path not exercised" && exit 1)

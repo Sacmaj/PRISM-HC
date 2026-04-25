@@ -175,7 +175,6 @@ def estimate_homeostatic_center(
     -------
     np.ndarray of shape (n_y, 1)
     """
-    _require_cvxpy()
     Y = _as_2d_time(Y_closed)
     if Y.shape[1] == 0:
         raise ValueError("Y_closed must contain at least one sample.")
@@ -186,6 +185,9 @@ def estimate_homeostatic_center(
     if method.lower() != "huber":
         raise ValueError("method must be 'median' or 'huber'.")
 
+    # Only the Huber branch needs cvxpy — defer the import check so callers
+    # explicitly requesting method="median" work in slim installs.
+    _require_cvxpy()
     n_y, _ = Y.shape
     y = cp.Variable((n_y, 1))
     resid = Y - y @ np.ones((1, Y.shape[1]))
