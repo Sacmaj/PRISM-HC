@@ -186,6 +186,33 @@ class TestSyntheticScaffold(unittest.TestCase):
             rid.cp = saved_cp
 
     @unittest.skipIf(rid.cp is None, "cvxpy not installed")
+    def test_bisection_returns_a_lb_zero_when_marginally_stable(self) -> None:
+        # A = I: contraction LMI A^T P A - (1-a)P <= 0 reduces to a*P <= 0,
+        # only feasible at a=0. Bisection only tests strict midpoints, so
+        # without the a_lo pre-check best_P would stay None and the function
+        # would raise even though a_lb=0 is the correct answer.
+        result = rid.bisection_a_lower_bound(
+            [np.eye(2)], a_lo=0.0, a_hi=0.5, tol=1e-3, max_iter=10
+        )
+        self.assertAlmostEqual(result["a_lb"], 0.0, places=3)
+        self.assertEqual(result["P"].shape, (2, 2))
+        self.assertTrue(np.all(np.isfinite(result["P"])))
+        # P must be PSD with trace ≈ 1 per the feasibility constraints.
+        eigvals = np.linalg.eigvalsh(result["P"])
+        self.assertTrue(np.all(eigvals > -1e-6))
+        self.assertAlmostEqual(float(np.trace(result["P"])), 1.0, places=3)
+
+    @unittest.skipIf(rid.cp is None, "cvxpy not installed")
+    def test_bisection_raises_when_a_lo_infeasible(self) -> None:
+        # A = 2*I: spectral radius 2, no a in [0, 0.999] makes the LMI
+        # feasible, so the late-RuntimeError compatibility path must still
+        # fire — the new pre-check should not mask genuine infeasibility.
+        with self.assertRaises(RuntimeError):
+            rid.bisection_a_lower_bound(
+                [2.0 * np.eye(2)], a_lo=0.0, a_hi=0.5, tol=1e-3, max_iter=8
+            )
+
+    @unittest.skipIf(rid.cp is None, "cvxpy not installed")
     def test_end_to_end_smoke(self) -> None:
         result = rid.run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS")
         bounds = result["bounds"]

@@ -765,7 +765,22 @@ def bisection_a_lower_bound(
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """Bisection search for the largest robustly feasible contraction rate lower bound."""
-    best_P: Optional[np.ndarray] = None
+    # Bisection only ever tests strict midpoints 0.5*(a_lo+a_hi), never a_lo
+    # itself. For a marginally-stable scenario whose feasible set is exactly
+    # {a_lo} (e.g., A=I where a=0 is feasible but every a>0 is infeasible),
+    # best_P would otherwise stay None and the function would raise despite
+    # a_lo being a valid lower bound. Seed best_P with a_lo's certificate
+    # when feasible; if a_lo itself is infeasible, no a>=a_lo can be either,
+    # but preserve the existing late-RuntimeError behavior for compatibility.
+    feasible_lo, P_lo, _ = solve_P_feasibility(
+        A_scenarios=A_scenarios,
+        a_candidate=a_lo,
+        pmin=pmin,
+        solver=solver,
+        verbose=verbose,
+    )
+    best_P: Optional[np.ndarray] = P_lo if feasible_lo else None
+
     for _ in range(max_iter):
         a_mid = 0.5 * (a_lo + a_hi)
         feasible, P_val, _ = solve_P_feasibility(
