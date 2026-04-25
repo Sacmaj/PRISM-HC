@@ -166,6 +166,10 @@ class PrismHCLite(nn.Module):
             state.h, state.R_l[0], R0=cfg.R0,
             lam_h=cfg.lam_h, eta_h=cfg.eta_h, dt=cfg.dt,
         )
+        state.chi = rebus.exp_euler(
+            state.chi, torch.zeros_like(state.chi),
+            cfg.lam_chi, cfg.dt, lo=0.0, hi=1.0,
+        )
 
         # (8) telemetry
         cbf = state.S - cfg.cbf_a * state.E.pow(cfg.cbf_p) - cfg.cbf_delta

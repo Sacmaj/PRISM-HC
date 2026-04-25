@@ -101,6 +101,52 @@ class ForwardSmokeTests(unittest.TestCase):
         self.assertLess(float(self.state.P.item()), 1.0)
         self.assertEqual(self.state.commits, 1)
 
+    def test_reset_episode_zeros_fast_state_only(self) -> None:
+        """reset_episode must zero fast state but leave U and W_rand bit-identical.
+
+        The slow/fast boundary is the load-bearing safety claim of the design;
+        previously asserted only by docs/comments.
+        """
+        U_snapshot = self.model.anchors.U.clone()
+        W_snapshot = self.model.reservoir.W_rand.clone()
+        # Drive fast state to non-zero values via a few forward steps.
+        for t in range(5):
+            self._step(t)
+        # Force-write every fast field to a non-zero value so reset has work to do.
+        self.state.E.fill_(0.5)
+        self.state.S.fill_(0.8)
+        self.state.rho.fill_(0.3)
+        self.state.chi.fill_(0.4)
+        self.state.h.fill_(0.2)
+        self.state.dwell_counter.fill_(7)
+        self.state.P.fill_(0.5)
+        for l in self.state.R_l:
+            self.state.R_l[l].fill_(0.6)
+        # Reset.
+        self.model.reset_episode(self.state)
+        # Fast state zeroed (P resets to 1.0 by convention).
+        for name, t in (
+            ("E", self.state.E), ("S", self.state.S),
+            ("rho", self.state.rho), ("chi", self.state.chi),
+            ("h", self.state.h),
+        ):
+            self.assertTrue(torch.equal(t, torch.zeros_like(t)),
+                            f"{name} not zeroed by reset_episode")
+        self.assertTrue(torch.equal(self.state.P, torch.ones_like(self.state.P)),
+                        "P did not reset to 1.0")
+        self.assertTrue(torch.equal(
+            self.state.dwell_counter, torch.zeros_like(self.state.dwell_counter)
+        ), "dwell_counter not zeroed")
+        for l in self.state.R_l:
+            self.assertTrue(torch.equal(
+                self.state.R_l[l], torch.zeros_like(self.state.R_l[l])
+            ), f"R_l[{l}] not zeroed")
+        # Slow state bit-identical (the load-bearing claim).
+        self.assertTrue(torch.equal(self.model.anchors.U, U_snapshot),
+                        "anchors.U mutated by reset_episode")
+        self.assertTrue(torch.equal(self.model.reservoir.W_rand, W_snapshot),
+                        "reservoir.W_rand mutated by reset_episode")
+
 
 if __name__ == "__main__":
     unittest.main()
