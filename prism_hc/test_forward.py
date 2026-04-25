@@ -101,6 +101,42 @@ class ForwardSmokeTests(unittest.TestCase):
         self.assertLess(float(self.state.P.item()), 1.0)
         self.assertEqual(self.state.commits, 1)
 
+    def test_telemetry_cbf_uses_robust_delta_eff(self) -> None:
+        """Telemetry's cbf field must be computed with delta_eff (the same
+        cbf_delta + cbf_robust_gamma the gate uses), or telemetry can report
+        a positive margin while can_commit() rejects with cbf_violated and
+        consumers of r.cbf miss real barrier violations.
+
+        Pick state values where the baseline delta margin is positive but
+        the robust delta_eff margin is negative, so the test fails loudly
+        if telemetry ever drifts back to using only cbf_delta.
+        """
+        cfg = PrismConfig(cbf_robust_gamma=0.20)
+        model = PrismHCLite(cfg)
+        state = model.init_state(batch=1)
+        belief = model.init_belief(batch=1)
+        # Force a state where: baseline cbf = 0.30 - 0.5*0.36 - 0.05 = +0.07
+        # robust cbf      = 0.30 - 0.5*0.36 - (0.05 + 0.20) = -0.13
+        state.S = torch.tensor([0.30])
+        state.E = torch.tensor([0.60])
+        x = torch.zeros(1, cfg.d_in)
+        _y, state, _belief, rec = model.forward(x, state, belief)
+        # State.E may have been clamped during forward; recompute the
+        # expected reading using the post-forward E/S the recorder saw.
+        S_post = float(state.S.item())
+        E_post = float(state.E.item())
+        expected_robust = (
+            S_post - cfg.cbf_a * (E_post ** cfg.cbf_p)
+            - (cfg.cbf_delta + cfg.cbf_robust_gamma)
+        )
+        expected_baseline_only = (
+            S_post - cfg.cbf_a * (E_post ** cfg.cbf_p) - cfg.cbf_delta
+        )
+        self.assertAlmostEqual(rec.cbf, expected_robust, places=5)
+        # Defensive: the two formulas must actually differ here, otherwise
+        # the test isn't exercising what it claims.
+        self.assertNotAlmostEqual(expected_robust, expected_baseline_only, places=2)
+
     def test_reset_episode_zeros_fast_state_only(self) -> None:
         """reset_episode must zero fast state but leave U and W_rand bit-identical.
 

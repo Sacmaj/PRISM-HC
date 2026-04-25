@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import unittest
 
 import torch
@@ -147,6 +148,116 @@ class LATCHGateTests(unittest.TestCase):
         state.S = torch.tensor([0.10])
         state.E = torch.tensor([0.80])
         self.assertFalse(self.ctrl.can_commit(state, P_min=0.6))
+
+
+class LATCHGammaRobustnessTests(unittest.TestCase):
+    """Verify SupervisorGains.Gamma -> cbf_robust_gamma actually shrinks the
+    LATCH safe set without disturbing the Gamma=0 path."""
+
+    def _base_kwargs(self) -> dict:
+        return dict(
+            lam_E=0.10, lam_S=0.15, lam_rho=0.05,
+            S_min=0.7, dwell_min=3, rho_max=0.9,
+            cbf_a=0.5, cbf_p=2.0, cbf_delta=0.05,
+        )
+
+    def test_gamma_zero_matches_baseline(self) -> None:
+        """Default cbf_robust_gamma=0.0 must yield bit-identical trajectories
+        to an explicit cbf_robust_gamma=0.0 — regression guard for the
+        existing 30-test suite."""
+        ctrl_default = LATCHPlasticityController(**self._base_kwargs())
+        ctrl_explicit = LATCHPlasticityController(
+            **self._base_kwargs(), cbf_robust_gamma=0.0,
+        )
+        state_d = _fresh_state()
+        state_e = _fresh_state()
+        safety = _safety(drift=0.0)
+        surprise = torch.tensor([0.4])
+        for _ in range(30):
+            state_d = ctrl_default.step(state_d, safety, surprise, dt=1.0)
+            state_e = ctrl_explicit.step(state_e, safety, surprise, dt=1.0)
+        self.assertTrue(torch.equal(state_d.E, state_e.E))
+        self.assertTrue(torch.equal(state_d.S, state_e.S))
+        self.assertTrue(torch.equal(state_d.rho, state_e.rho))
+
+    def test_nonzero_gamma_blocks_commit_at_boundary(self) -> None:
+        """At S=0.30, E=0.60 the baseline CBF h = 0.30 - 0.5*0.36 - 0.05 =
+        +0.07 (commit allowed). With cbf_robust_gamma=0.10, delta_eff=0.15
+        and h = -0.03 (commit blocked, diagnose flags cbf_violated)."""
+        ctrl_baseline = LATCHPlasticityController(**self._base_kwargs())
+        ctrl_robust = LATCHPlasticityController(
+            **self._base_kwargs(), cbf_robust_gamma=0.10,
+        )
+        state = _fresh_state()
+        state.S = torch.tensor([0.30])
+        state.E = torch.tensor([0.60])
+        state.rho = torch.tensor([0.10])
+        state.dwell_counter = torch.tensor([10], dtype=torch.long)
+        state.P = torch.tensor([1.0])
+        self.assertTrue(ctrl_baseline.can_commit(state, P_min=0.6))
+        self.assertFalse(ctrl_robust.can_commit(state, P_min=0.6))
+        self.assertEqual(ctrl_robust.diagnose(state, P_min=0.6), "cbf_violated")
+        self.assertEqual(ctrl_baseline.diagnose(state, P_min=0.6), "ok")
+
+    def test_rho_tracks_post_clamp_E(self) -> None:
+        """Refractory rho must integrate against the CBF-clamped E, not the
+        pre-clamp value. Otherwise the robust delta_eff path can inflate rho
+        from a high pre-clamp E that was never enforced, blocking later
+        commits on rho_max even though the enforced openness is safe.
+        """
+        # Setup: a tight CBF (cbf_a=2.0, large E^p coefficient) with the
+        # gate held fully open so we can hand-pick E,S that force the clamp
+        # to bind hard.
+        ctrl = LATCHPlasticityController(
+            lam_E=0.10, lam_S=0.15, lam_rho=0.05,
+            S_min=0.0, dwell_min=0, rho_max=0.9,
+            cbf_a=2.0, cbf_p=2.0, cbf_delta=0.05,
+        )
+        state = _fresh_state()
+        state.E = torch.tensor([0.80])
+        state.S = torch.tensor([0.30])
+        state.rho = torch.tensor([0.50])
+        state.dwell_counter = torch.tensor([10], dtype=torch.long)
+        # safety drift=0.7 -> instant_safety=0.3, so S_next stays near 0.30.
+        safety = _safety(drift=0.7)
+        prev_rho = float(state.rho.item())
+        state = ctrl.step(state, safety, torch.tensor([1.0]), dt=1.0)
+        E_post = float(state.E.item())
+        S_post = float(state.S.item())
+        # The clamp must have bound: max_safe_E = sqrt((S - 0.05) / 2.0) is
+        # about 0.354 at S~0.30, well under the unclamped E_next ~ 0.819.
+        max_safe_E = ((S_post - 0.05) / 2.0) ** 0.5
+        self.assertAlmostEqual(E_post, max_safe_E, places=4)
+        # Now the load-bearing assertion: rho must equal exp_euler against
+        # the post-clamp E. Computed in closed form so the test fails loudly
+        # if the step ordering ever regresses.
+        leak = math.exp(-0.05 * 1.0)
+        expected_rho = prev_rho * leak + (1.0 - leak) * E_post
+        # rho is then clamped to [0,1] by _exp_euler; expected_rho is in range.
+        self.assertAlmostEqual(float(state.rho.item()), expected_rho, places=5)
+
+    def test_nonzero_gamma_lowers_max_safe_E_in_step(self) -> None:
+        """Driving sustained high surprise into two controllers with identical
+        config except cbf_robust_gamma must leave the robust controller with
+        strictly smaller steady-state E. Gate is unconstrained (S_min=0,
+        dwell_min=0) so the CBF clamp is the binding constraint."""
+        base_kwargs = dict(
+            lam_E=0.10, lam_S=0.15, lam_rho=0.05,
+            S_min=0.0, dwell_min=0, rho_max=0.9,
+            cbf_a=0.5, cbf_p=2.0, cbf_delta=0.05,
+        )
+        ctrl_baseline = LATCHPlasticityController(**base_kwargs)
+        ctrl_robust = LATCHPlasticityController(
+            **base_kwargs, cbf_robust_gamma=0.20,
+        )
+        state_b = _fresh_state()
+        state_r = _fresh_state()
+        safety = _safety(drift=0.5)  # instant_safety=0.5, S settles ~0.5
+        surprise = torch.tensor([1.0])
+        for _ in range(60):
+            state_b = ctrl_baseline.step(state_b, safety, surprise, dt=1.0)
+            state_r = ctrl_robust.step(state_r, safety, surprise, dt=1.0)
+        self.assertLess(float(state_r.E.item()), float(state_b.E.item()))
 
 
 if __name__ == "__main__":

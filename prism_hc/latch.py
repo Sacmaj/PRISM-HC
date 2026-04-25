@@ -42,6 +42,7 @@ class LATCHPlasticityController:
         cbf_a: float = 0.5,
         cbf_p: float = 2.0,
         cbf_delta: float = 0.05,
+        cbf_robust_gamma: float = 0.0,
     ):
         self.lam_E = lam_E
         self.lam_S = lam_S
@@ -52,6 +53,7 @@ class LATCHPlasticityController:
         self.cbf_a = cbf_a
         self.cbf_p = cbf_p
         self.cbf_delta = cbf_delta
+        self.cbf_robust_gamma = cbf_robust_gamma
 
     @staticmethod
     def _exp_euler(
@@ -92,17 +94,25 @@ class LATCHPlasticityController:
         gated_target = surprise_drive * gate.to(surprise_drive.dtype)
         E_next = self._exp_euler(state.E, gated_target, self.lam_E, dt)
 
-        # (4) Refractory rho tracks E (capacity accumulator).
-        rho_next = self._exp_euler(state.rho, E_next, self.lam_rho, dt)
-
-        # (5) Joint CBF clamp: forbid high E under low S.
-        # h(E, S) = S - a * E^p - delta >= 0  =>  E <= ((S - delta) / a) ^ (1/p)
+        # (4) Joint CBF clamp: forbid high E under low S.
+        # h(E, S) = S - a * E^p - delta_eff >= 0  =>
+        # E <= ((S - delta_eff) / a) ^ (1/p)
+        # delta_eff folds the supervisor-gain robustness offset into the
+        # static cbf_delta so the synthesized Gamma shrinks the safe set.
         # The inner clamp keeps the base non-negative so pow(1/p) stays real.
+        # Apply BEFORE the rho update so refractory tracks the actual
+        # post-clamp openness; otherwise rho can saturate from a high
+        # pre-clamp E that was never enforced, blocking later commits on
+        # rho_max even though the enforced openness is safe.
+        delta_eff = self.cbf_delta + self.cbf_robust_gamma
         base = torch.clamp(
-            (S_next - self.cbf_delta) / max(self.cbf_a, 1e-6), min=0.0
+            (S_next - delta_eff) / max(self.cbf_a, 1e-6), min=0.0
         )
         max_safe_E = base.pow(1.0 / max(self.cbf_p, 1e-6))
         E_next = torch.minimum(E_next, max_safe_E)
+
+        # (5) Refractory rho tracks the post-clamp E (capacity accumulator).
+        rho_next = self._exp_euler(state.rho, E_next, self.lam_rho, dt)
 
         state.E = E_next
         state.S = S_next
@@ -116,10 +126,11 @@ class LATCHPlasticityController:
         P_min: float,
     ) -> bool:
         """All four eligibility conditions must hold (per batch element)."""
+        delta_eff = self.cbf_delta + self.cbf_robust_gamma
         dwell_ok = state.dwell_counter >= self.dwell_min
         P_ok = state.P >= P_min
         rho_ok = state.rho < self.rho_max
-        cbf = state.S - self.cbf_a * state.E.pow(self.cbf_p) - self.cbf_delta
+        cbf = state.S - self.cbf_a * state.E.pow(self.cbf_p) - delta_eff
         cbf_ok = cbf >= 0.0
         return bool((dwell_ok & P_ok & rho_ok & cbf_ok).all().item())
 
@@ -131,7 +142,8 @@ class LATCHPlasticityController:
             return "priming_below_threshold"
         if not bool((state.rho < self.rho_max).all().item()):
             return "refractory_saturated"
-        cbf = state.S - self.cbf_a * state.E.pow(self.cbf_p) - self.cbf_delta
+        delta_eff = self.cbf_delta + self.cbf_robust_gamma
+        cbf = state.S - self.cbf_a * state.E.pow(self.cbf_p) - delta_eff
         if not bool((cbf >= 0.0).all().item()):
             return "cbf_violated"
         return "ok"

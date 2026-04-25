@@ -133,6 +133,18 @@ def main() -> int:
     assert cfg.gamma_d != defaults.gamma_d, "gamma_d did not change from default"
     assert cfg.gamma_eps != defaults.gamma_eps, "gamma_eps did not change from default"
 
+    # Gamma propagation: SupervisorGains.Gamma must flow into cbf_robust_gamma
+    # so LATCH's joint-CBF safe set actually shrinks under the synthesizer's
+    # disturbance-gain bound. Guards against regression to the pre-PR state
+    # where Gamma was dropped on the floor.
+    assert cfg.cbf_robust_gamma == gains.Gamma, (
+        f"Gamma not propagated: cfg.cbf_robust_gamma={cfg.cbf_robust_gamma} "
+        f"vs gains.Gamma={gains.Gamma}"
+    )
+    assert cfg.cbf_robust_gamma != defaults.cbf_robust_gamma, (
+        "cbf_robust_gamma still at default; Gamma wire-up regressed"
+    )
+
     # Custom mapping: prove the gamma_map override works.
     cfg_custom = PrismConfig.from_rebus_synthesis(
         gains,
