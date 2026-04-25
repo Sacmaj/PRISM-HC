@@ -1,0 +1,121 @@
+"""Unit-test scaffold for `rebus_identification.py`.
+
+This file uses Python's built-in `unittest` framework so it can run without
+pytest. Solver-dependent smoke tests are skipped automatically when cvxpy is
+not installed.
+"""
+
+from __future__ import annotations
+
+import math
+import unittest
+
+import numpy as np
+
+import rebus_identification as rid
+
+
+class TestSyntheticScaffold(unittest.TestCase):
+    def test_synthetic_data_shapes_and_keys(self) -> None:
+        data, truth = rid.make_synthetic_rebus_data(T=48, nx=3, seed=11)
+        required = {
+            "X_t",
+            "U_t",
+            "X_tp1",
+            "alpha_t",
+            "alpha_tp1",
+            "omega_t",
+            "chi_t",
+            "e_t",
+            "e_tp1",
+            "alpha_t_for_e",
+            "nu_t",
+            "strain_delta_t",
+            "alpha_t_for_b",
+            "nu_t_for_b",
+            "alpha_bar",
+            "e_bar",
+            "omega_bar",
+            "barV",
+        }
+        self.assertTrue(required.issubset(data.keys()))
+        self.assertEqual(data["X_t"].shape, (3, 48))
+        self.assertEqual(data["U_t"].shape, (3, 48))
+        self.assertEqual(data["X_tp1"].shape, (3, 48))
+        self.assertGreater(float(data["barV"]), 0.0)
+        self.assertTrue(np.all(np.isfinite(truth.A)))
+
+    def test_one_sided_bounds_helper(self) -> None:
+        samples = [
+            {
+                "phi_alpha": 0.75,
+                "phi_e": 0.65,
+                "psi_e": 0.15,
+                "kappa": 0.18,
+                "c_alpha": 0.30,
+                "c_nu": 0.50,
+            },
+            {
+                "phi_alpha": 0.80,
+                "phi_e": 0.70,
+                "psi_e": 0.20,
+                "kappa": 0.22,
+                "c_alpha": 0.45,
+                "c_nu": 0.55,
+            },
+        ]
+        out = rid.one_sided_bounds(samples, delta_alpha=0.1, delta_e=0.1, delta_b=0.1)
+        self.assertGreaterEqual(out["phi_alpha_ub"], 0.75)
+        self.assertGreaterEqual(out["phi_e_ub"], 0.65)
+        self.assertGreaterEqual(out["kappa_ub"], out["psi_e_ub"])
+        self.assertGreater(out["c_alpha_ub"], 0.0)
+        self.assertGreater(out["c_nu_ub"], 0.0)
+        self.assertLess(out["lambda_lb"], 1.0)
+        self.assertLess(out["mu_lb"], 1.0)
+
+    def test_gain_synthesis_returns_positive_scalars(self) -> None:
+        bounds = {
+            "a_lb": 0.12,
+            "lambda_lb": 0.20,
+            "mu_lb": 0.25,
+            "kappa_ub": 0.30,
+            "b1_ub": 0.18,
+            "b2_ub": 0.16,
+            "b3_ub": 0.21,
+        }
+        gains = rid.synthesize_supervisor_gains(bounds, eta=0.25)
+        self.assertGreater(gains.p, 0.0)
+        self.assertGreater(gains.q, 0.0)
+        self.assertGreater(gains.Gamma, bounds["b3_ub"])
+        self.assertGreater(gains.delta_safe, 0.0)
+
+    def test_missing_keys_raise(self) -> None:
+        data, _ = rid.make_synthetic_rebus_data(T=32, nx=2, seed=3)
+        broken = dict(data)
+        broken.pop("U_t")
+        with self.assertRaises(KeyError):
+            rid.identify_rebus_bounds(broken, B=4, block_len=8)
+
+    def test_smoke_test_contract_without_solver(self) -> None:
+        result = rid.synthetic_smoke_test(T=24, nx=2, B=4, block_len=8)
+        self.assertIn(result["status"], {"passed", "skipped_no_cvxpy"})
+        self.assertTrue(result["checks"]["required_keys_present"])
+
+    @unittest.skipIf(rid.cp is None, "cvxpy not installed")
+    def test_end_to_end_smoke(self) -> None:
+        result = rid.run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS")
+        bounds = result["bounds"]
+        gains = result["gains"]
+        self.assertTrue(np.all(np.isfinite(bounds.P)))
+        self.assertGreaterEqual(bounds.a_lb, 0.0)
+        self.assertGreater(bounds.lambda_lb, 0.0)
+        self.assertGreater(bounds.mu_lb, 0.0)
+        self.assertGreaterEqual(bounds.kappa_ub, 0.0)
+        self.assertGreater(gains.p, 0.0)
+        self.assertGreater(gains.q, 0.0)
+        self.assertTrue(math.isfinite(gains.delta_safe))
+        self.assertTrue(math.isfinite(gains.Gamma))
+
+
+if __name__ == "__main__":
+    unittest.main()
