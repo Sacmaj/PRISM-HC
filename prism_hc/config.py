@@ -7,7 +7,6 @@ a single source of truth and can be re-tuned without code edits.
 
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Tuple, Union
 
@@ -113,8 +112,12 @@ class PrismConfig:
         if gamma_map is None:
             gamma_map = lambda g: (0.5 / g.p, 0.5 / g.q, 0.5 * g.delta_safe)
         gs, gd, ge = gamma_map(gains)
-        return dataclasses.replace(
-            cls(),
+        # Build directly via cls() rather than dataclasses.replace(cls(), ...):
+        # the latter would copy already-normalized length-L=2 tuples for
+        # delta_l/kappa_l from the seed instance, then trip __post_init__'s
+        # length check if `overrides` raises L without also overriding
+        # delta_l/kappa_l.
+        return cls(
             gamma_s=float(gs),
             gamma_d=float(gd),
             gamma_eps=float(ge),
