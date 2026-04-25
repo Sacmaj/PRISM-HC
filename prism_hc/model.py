@@ -56,6 +56,7 @@ class PrismHCLite(nn.Module):
             cbf_a=cfg.cbf_a,
             cbf_p=cfg.cbf_p,
             cbf_delta=cfg.cbf_delta,
+            cbf_robust_gamma=cfg.cbf_robust_gamma,
         )
         self.register_buffer("pi_bar", torch.ones(cfg.L, cfg.d_hidden))
 

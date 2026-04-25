@@ -39,6 +39,12 @@ class PrismConfig:
     cbf_a: float = 0.5
     cbf_p: float = 2.0
     cbf_delta: float = 0.05
+    # Robustness offset added to cbf_delta inside LATCH:
+    # delta_eff = cbf_delta + cbf_robust_gamma. Default 0.0 preserves
+    # bit-identical behavior; from_rebus_synthesis populates this from
+    # SupervisorGains.Gamma so the synthesizer's disturbance-gain bound
+    # actually shrinks LATCH's safe set.
+    cbf_robust_gamma: float = 0.0
 
     # Priming / commit
     P_min: float = 0.6
@@ -97,21 +103,31 @@ class PrismConfig:
         optionally `.Gamma`) attributes, matching the SupervisorGains dataclass
         in AI Papers/rebus_identification.py.
 
-        The default mapping is a HEURISTIC, not a derivation. The synthesizer's
-        composite-Lyapunov coefficients (p, q, delta_safe, Gamma) and the
-        REBUS-update forcing-term coefficients (gamma_s, gamma_d, gamma_eps)
-        are mathematically distinct objects. Default:
+        The default `gamma_map` is a HEURISTIC, not a derivation. The
+        synthesizer's composite-Lyapunov coefficients (p, q, delta_safe) and
+        the REBUS-update forcing-term coefficients (gamma_s, gamma_d,
+        gamma_eps) are mathematically distinct objects. Default:
 
             (gamma_s, gamma_d, gamma_eps) = (0.5/p, 0.5/q, 0.5*delta_safe)
 
         Override via `gamma_map=lambda g: (...)` if you have a principled
-        relationship in mind. `Gamma` has no current home in PrismConfig and
-        is dropped on the floor; revisit if/when supervisor-gain enforcement
-        gets wired into LATCH.
+        relationship in mind.
+
+        `Gamma` (read via getattr so duck-typed gains without it still work)
+        is the upper bound on disturbance-driven Lyapunov increase under the
+        composite Lyapunov function. It propagates into `cbf_robust_gamma`,
+        which LATCH adds to `cbf_delta` to shrink the joint CBF safe set
+        proportional to the disturbance gain. Pass `cbf_robust_gamma=...`
+        in **overrides to scale or zero this contribution at the call site.
         """
         if gamma_map is None:
             gamma_map = lambda g: (0.5 / g.p, 0.5 / g.q, 0.5 * g.delta_safe)
         gs, gd, ge = gamma_map(gains)
+        # Pop so an explicit `cbf_robust_gamma` in overrides wins over the
+        # gains-derived value without colliding on the keyword argument.
+        gamma_val = float(
+            overrides.pop("cbf_robust_gamma", getattr(gains, "Gamma", 0.0))
+        )
         # Build directly via cls() rather than dataclasses.replace(cls(), ...):
         # the latter would copy already-normalized length-L=2 tuples for
         # delta_l/kappa_l from the seed instance, then trip __post_init__'s
@@ -121,5 +137,6 @@ class PrismConfig:
             gamma_s=float(gs),
             gamma_d=float(gd),
             gamma_eps=float(ge),
+            cbf_robust_gamma=gamma_val,
             **overrides,
         )
