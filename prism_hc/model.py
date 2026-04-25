@@ -177,8 +177,13 @@ class PrismHCLite(nn.Module):
             cfg.lam_chi, cfg.dt, lo=0.0, hi=1.0,
         )
 
-        # (8) telemetry
-        cbf = state.S - cfg.cbf_a * state.E.pow(cfg.cbf_p) - cfg.cbf_delta
+        # (8) telemetry — must use the same effective barrier offset as
+        # LATCH's commit gate (cbf_delta + cbf_robust_gamma); otherwise
+        # telemetry can report a positive margin while can_commit() rejects
+        # with cbf_violated, hiding real barrier violations from monitoring
+        # and demo assertions that consume r.cbf.
+        delta_eff = cfg.cbf_delta + cfg.cbf_robust_gamma
+        cbf = state.S - cfg.cbf_a * state.E.pow(cfg.cbf_p) - delta_eff
         rec = StepRecord(
             R=float(state.R_l[0].mean().item()),
             E=float(state.E.mean().item()),
