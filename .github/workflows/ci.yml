@@ -32,7 +32,10 @@ jobs:
 
       - name: Verify cvxpy/scs are not imported by in-repo code
         run: |
-          if grep -rE '^[[:space:]]*(import|from)[[:space:]]+(cvxpy|scs)([[:space:]]|$|\.)' prism_hc/; then
+          # Boundary set after module name covers every legal Python form:
+          #   end-of-line, whitespace ("import cvxpy as cp"), "." (submodule),
+          #   "," ("import cvxpy, numpy"), ";" ("import cvxpy; foo()").
+          if grep -rE '^[[:space:]]*(import|from)[[:space:]]+(cvxpy|scs)($|[[:space:].,;])' prism_hc/; then
             echo "::error::cvxpy/scs import found in prism_hc/; update CI install or remove the import"
             exit 1
           fi
