@@ -1,28 +1,32 @@
 """End-to-end smoke check: REBUS synthesis scaffold drives the prototype config.
 
-Pipeline:
-  1. Load AI Papers/rebus_identification.py via importlib (the folder name has
-     a space, so it isn't a normal Python package). The prototype's
-     PrismConfig.from_rebus_synthesis(...) is import-clean — only the caller
-     handles the import dance.
-  2. Call run_demo(...) which runs make_synthetic_rebus_data ->
-     identify_rebus_bounds -> synthesize_supervisor_gains.
-  3. Hand the SupervisorGains to PrismConfig.from_rebus_synthesis(gains).
-  4. Build a PrismHCLite from the synthesized config and run a few forward
-     steps to confirm the wired config produces a stable trajectory.
+The scaffold under `AI Papers/rebus_identification.py` is currently
+out-of-tree (not committed to this repo). This demo handles three cases:
 
-Requires: cvxpy and scs (already in requirements.txt) — used by
-identify_rebus_bounds for the robust-bound LMI solve.
+  1. Scaffold present + cvxpy available: run the full synthesis pipeline
+     (make_synthetic_rebus_data -> identify_rebus_bounds ->
+     synthesize_supervisor_gains) and feed the gains into PrismConfig.
+  2. Scaffold present but cvxpy missing: skip the LMI solve and exercise
+     the wire-up with a fabricated SupervisorGains-shaped object.
+  3. Scaffold absent (default for fresh clones): same fallback as (2).
 
-Run:  .\\.venv\\Scripts\\python -m prism_hc.synthesis_demo
+Cases (2) and (3) prove that PrismConfig.from_rebus_synthesis is
+import-clean — it duck-types its `gains` argument and never imports
+from `AI Papers/`, so the prototype's wire-up surface is testable
+without the out-of-tree scaffold.
+
+Run:  python -m prism_hc.synthesis_demo
 """
 
 from __future__ import annotations
 
 import importlib.util
+import math
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import torch
 
@@ -34,49 +38,84 @@ from prism_hc.model import PrismHCLite
 from prism_hc.telemetry import TelemetryRecorder
 
 
-def load_rebus_module():
-    """Load AI Papers/rebus_identification.py from disk.
+@dataclass(frozen=True)
+class StubSupervisorGains:
+    """Stand-in for SupervisorGains when the AI Papers scaffold isn't present.
 
-    Walks up from this file to find the repo root (looks for `AI Papers/`).
-    Uses importlib.util because the folder name contains a space and cannot
-    be imported as a normal package.
+    Field names and semantics match SupervisorGains at
+    AI Papers/rebus_identification.py:75 — PrismConfig.from_rebus_synthesis
+    duck-types these attributes, so the wire-up exercises identically.
+
+    Values chosen so the default heuristic mapping (0.5/p, 0.5/q,
+    0.5*delta_safe) yields plausible gammas in the same order of magnitude
+    as the PrismConfig defaults (0.20, 0.15, 0.10) but distinct from them
+    (so the differs-from-defaults assertion actually verifies the wire-up).
     """
+    p: float = 2.0          # -> gamma_s = 0.25
+    q: float = 2.5          # -> gamma_d = 0.20
+    delta_safe: float = 0.30  # -> gamma_eps = 0.15
+    Gamma: float = 0.50
+
+
+def find_rebus_module_path() -> Optional[Path]:
+    """Walk up from this file looking for AI Papers/rebus_identification.py."""
     here = Path(__file__).resolve()
     for ancestor in [here.parent, *here.parents]:
         candidate = ancestor / "AI Papers" / "rebus_identification.py"
         if candidate.exists():
-            target = candidate
-            break
-    else:
-        raise FileNotFoundError(
-            "Could not locate 'AI Papers/rebus_identification.py' walking up "
-            f"from {here}. Synthesis demo requires the AI Papers scaffold."
-        )
+            return candidate
+    return None
+
+
+def load_rebus_module(target: Path):
+    """Load rebus_identification.py from `target` via importlib.
+
+    The folder name has a space, so it can't be imported as a package.
+    """
     spec = importlib.util.spec_from_file_location("rebus_identification", str(target))
     if spec is None or spec.loader is None:
         raise ImportError(f"Failed to build module spec for {target}")
     module = importlib.util.module_from_spec(spec)
     # Register before exec_module: Python 3.10's @dataclass machinery looks
-    # up cls.__module__ in sys.modules during class construction, which fails
-    # for modules loaded via importlib.util that haven't been registered.
+    # up cls.__module__ in sys.modules during class construction, which
+    # fails for modules loaded via importlib that haven't been registered.
     sys.modules["rebus_identification"] = module
     spec.loader.exec_module(module)
     return module
 
 
-def main() -> int:
-    rid = load_rebus_module()
-    if rid.cp is None:
-        print("SKIP: cvxpy not installed; cannot run REBUS bound synthesis")
-        return 0
+def synthesize_or_stub() -> tuple[object, str]:
+    """Produce a SupervisorGains-shaped object, with provenance label.
 
+    Returns (gains, source) where source is one of:
+      'pipeline' — full synthesis ran (scaffold + cvxpy)
+      'stub'     — scaffold absent or cvxpy missing; using StubSupervisorGains
+    """
+    target = find_rebus_module_path()
+    if target is None:
+        print(
+            "AI Papers/rebus_identification.py not found in the repo tree; "
+            "using StubSupervisorGains to exercise the wire-up."
+        )
+        return StubSupervisorGains(), "stub"
+    rid = load_rebus_module(target)
+    if rid.cp is None:
+        print(
+            "scaffold present but cvxpy not installed; using "
+            "StubSupervisorGains to exercise the wire-up."
+        )
+        return StubSupervisorGains(), "stub"
     print("running REBUS synthesis pipeline (small synthetic scaffold)...")
     result = rid.run_demo(
         T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS"
     )
-    gains = result["gains"]
+    return result["gains"], "pipeline"
+
+
+def main() -> int:
+    gains, source = synthesize_or_stub()
     print(
-        f"synthesized gains: p={gains.p:.4f} q={gains.q:.4f} "
+        f"[{source}] gains: p={gains.p:.4f} q={gains.q:.4f} "
         f"delta_safe={gains.delta_safe:.4f} Gamma={gains.Gamma:.4f}"
     )
 
@@ -87,8 +126,8 @@ def main() -> int:
         f"gamma_eps={cfg.gamma_eps:.4f}"
     )
 
-    # Sanity check: defaults are 0.20, 0.15, 0.10. The synthesized values
-    # must differ from these (otherwise the wire-up isn't actually driving).
+    # Sanity: synthesized gammas must differ from defaults — otherwise the
+    # wire-up isn't actually driving the config.
     defaults = PrismConfig()
     assert cfg.gamma_s != defaults.gamma_s, "gamma_s did not change from default"
     assert cfg.gamma_d != defaults.gamma_d, "gamma_d did not change from default"
@@ -122,12 +161,14 @@ def main() -> int:
         _y, state, belief, rec = model.forward(x, state, belief)
         tele.append_step(rec)
 
-    # All-finite invariant check — proves the synthesized gammas don't blow
-    # up the REBUS update.
-    for r in tele.steps:
+    # All-finite invariant check (rejects both NaN and +/-inf) — proves the
+    # synthesized gammas don't blow up the REBUS update.
+    for step_idx, r in enumerate(tele.steps):
         for name, v in (("R", r.R), ("E", r.E), ("S", r.S), ("h", r.h),
                         ("F", r.F), ("cbf", r.cbf)):
-            assert v == v, f"{name} produced NaN at step {r}"  # NaN guard
+            assert math.isfinite(v), (
+                f"{name} not finite at step {step_idx}: {v!r}"
+            )
     print(f"all 10 forward steps finite, F_final={tele.steps[-1].F:.4f}")
     print("OK")
     return 0
