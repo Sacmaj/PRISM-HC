@@ -86,7 +86,7 @@ class AuthorityAsymmetryProbeTests(unittest.TestCase):
             state.dwell_counter.fill_(cfg.dwell_min + 1)
             state.P.fill_(1.0)
             grads = {
-                n: torch.randn_like(p, generator=gen) * 0.01
+                n: torch.randn(p.shape, generator=gen, dtype=p.dtype, device=p.device) * 0.01
                 for n, p in model.named_parameters() if p.requires_grad
             }
             model.plasticity_step(state, grads, tele)

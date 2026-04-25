@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, Union
 
 
 @dataclass
@@ -58,10 +58,31 @@ class PrismConfig:
     lam_h: float = 0.03
     eta_h: float = 0.05
 
-    # Precision modulation per-layer
-    delta_l: Tuple[float, ...] = (0.30, 0.30)
-    kappa_l: Tuple[float, ...] = (0.50, 0.50)
+    # Precision modulation per-layer. Accepts a scalar (broadcast to all L
+    # layers), a 1-tuple (broadcast), or a tuple of length L; normalized to a
+    # length-L tuple by __post_init__.
+    delta_l: Union[float, Tuple[float, ...]] = 0.30
+    kappa_l: Union[float, Tuple[float, ...]] = 0.50
     log_pi_clamp: Tuple[float, float] = (-6.0, 6.0)
+
+    def __post_init__(self) -> None:
+        self.delta_l = self._normalize_per_layer("delta_l", self.delta_l)
+        self.kappa_l = self._normalize_per_layer("kappa_l", self.kappa_l)
+
+    def _normalize_per_layer(
+        self, name: str, value: Union[float, Tuple[float, ...]]
+    ) -> Tuple[float, ...]:
+        if isinstance(value, (int, float)):
+            return (float(value),) * self.L
+        value = tuple(float(v) for v in value)
+        if len(value) == 1:
+            return value * self.L
+        if len(value) != self.L:
+            raise ValueError(
+                f"{name} has length {len(value)} but L={self.L}; "
+                f"pass a scalar, a 1-tuple, or a tuple of length L."
+            )
+        return value
 
     @classmethod
     def from_rebus_synthesis(
