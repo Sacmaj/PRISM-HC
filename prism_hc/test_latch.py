@@ -91,6 +91,32 @@ class LATCHGateTests(unittest.TestCase):
         )
         self.assertGreaterEqual(cbf, -1e-6, f"CBF violated: h={cbf} S={S} E={E}")
 
+    def test_cbf_clamp_general_p(self) -> None:
+        """Clamp must respect h(E,S) = S - a*E^p - delta >= 0 for any p, not
+        just p=2. The earlier sqrt-based clamp silently violated the barrier
+        for p < 2 (e.g. p=1.5). We pick a regime where the clamp is the
+        binding constraint: cbf_a is large so max_safe_E < 1, and S_min=0
+        lets the gate open immediately.
+        """
+        for p in (1.5, 3.0, 4.0):
+            ctrl = LATCHPlasticityController(
+                lam_E=0.10, lam_S=0.15, lam_rho=0.05,
+                S_min=0.0, dwell_min=0, rho_max=0.9,
+                cbf_a=2.0, cbf_p=p, cbf_delta=0.05,
+            )
+            state = _fresh_state()
+            safety = _safety(drift=0.5)  # instant_safety ~ 0.5, S settles near 0.5
+            # Drive maximal surprise; gate is open immediately (S_min=0, dwell_min=0).
+            for _ in range(60):
+                state = ctrl.step(state, safety, torch.tensor([1.0]), dt=1.0)
+            E = float(state.E.item())
+            S = float(state.S.item())
+            cbf = S - ctrl.cbf_a * (E ** ctrl.cbf_p) - ctrl.cbf_delta
+            self.assertGreaterEqual(
+                cbf, -1e-6,
+                f"CBF violated at p={p}: h={cbf:.4f} S={S:.4f} E={E:.4f}",
+            )
+
     def test_can_commit_requires_all_conditions(self) -> None:
         """Each gating condition independently blocks commits."""
         state = _fresh_state()

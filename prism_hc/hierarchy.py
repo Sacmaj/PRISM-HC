@@ -51,7 +51,10 @@ class BeliefHierarchy(nn.Module):
         pi_l_dict: Dict[int, torch.Tensor],
         eps_l_dict: Dict[int, torch.Tensor],
     ) -> torch.Tensor:
-        F = torch.zeros((), dtype=next(self.parameters()).dtype)
+        # Pin the accumulator to the same device/dtype as model parameters so
+        # CUDA / MPS runs do not hit a device-mismatch error on F + quad.
+        ref = next(self.parameters())
+        F = torch.zeros((), dtype=ref.dtype, device=ref.device)
         for l, eps in eps_l_dict.items():
             pi = pi_l_dict[l]
             quad = 0.5 * (pi * eps.pow(2)).sum(dim=-1).mean()

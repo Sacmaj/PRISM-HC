@@ -96,9 +96,12 @@ class LATCHPlasticityController:
         rho_next = self._exp_euler(state.rho, E_next, self.lam_rho, dt)
 
         # (5) Joint CBF clamp: forbid high E under low S.
-        max_safe_E = torch.sqrt(
-            torch.clamp((S_next - self.cbf_delta) / max(self.cbf_a, 1e-6), min=0.0)
+        # h(E, S) = S - a * E^p - delta >= 0  =>  E <= ((S - delta) / a) ^ (1/p)
+        # The inner clamp keeps the base non-negative so pow(1/p) stays real.
+        base = torch.clamp(
+            (S_next - self.cbf_delta) / max(self.cbf_a, 1e-6), min=0.0
         )
+        max_safe_E = base.pow(1.0 / max(self.cbf_p, 1e-6))
         E_next = torch.minimum(E_next, max_safe_E)
 
         state.E = E_next
