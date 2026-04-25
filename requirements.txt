@@ -1,0 +1,5 @@
+﻿numpy>=1.25
+cvxpy>=1.4
+scs>=3.2
+pytest>=8.0
+torch>=2.0

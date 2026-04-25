@@ -1,0 +1,42 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Logs and local outputs
+*.log
+logs/
+outputs/
+artifacts/
+*.tmp
+*.bak
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+
+# Solver / notebook scratch
+*.mat
+*.npz
+*.npy
+.ipynb_checkpoints/
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code worktrees and local config
+.claude/
