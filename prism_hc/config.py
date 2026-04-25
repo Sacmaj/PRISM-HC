@@ -73,6 +73,19 @@ class PrismConfig:
     def __post_init__(self) -> None:
         self.delta_l = self._normalize_per_layer("delta_l", self.delta_l)
         self.kappa_l = self._normalize_per_layer("kappa_l", self.kappa_l)
+        # cbf_robust_gamma is an additive robustness offset on top of
+        # cbf_delta. A negative value would shrink delta_eff below baseline
+        # and expand the CBF safe set, inverting the intended robustness
+        # tightening (e.g. a state at S=0.20, E=0.60 that fails commit at
+        # gamma=0 would pass at gamma=-0.20). Upstream Gamma = b3_ub + p*eta
+        # can go negative if a caller passes negative eta; refuse loudly
+        # rather than silently flipping the safety semantics.
+        if self.cbf_robust_gamma < 0.0:
+            raise ValueError(
+                f"cbf_robust_gamma must be >= 0 (got {self.cbf_robust_gamma}); "
+                f"a negative robustness offset would expand the CBF safe set "
+                f"and invert the intended tightening."
+            )
 
     def _normalize_per_layer(
         self, name: str, value: Union[float, Tuple[float, ...]]

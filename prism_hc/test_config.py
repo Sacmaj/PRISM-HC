@@ -77,6 +77,32 @@ class PrismConfigNormalizationTests(unittest.TestCase):
         )
         self.assertEqual(cfg.cbf_robust_gamma, 0.05)
 
+    def test_negative_cbf_robust_gamma_rejected_direct(self) -> None:
+        """Direct construction with negative robust gamma must raise. Negative
+        values would shrink delta_eff below baseline, expanding the CBF safe
+        set and inverting the intended robustness tightening."""
+        with self.assertRaises(ValueError) as ctx:
+            PrismConfig(cbf_robust_gamma=-0.10)
+        self.assertIn("cbf_robust_gamma", str(ctx.exception))
+
+    def test_negative_gamma_rejected_via_synthesis(self) -> None:
+        """A SupervisorGains-shaped object whose Gamma went negative
+        (upstream computes Gamma = b3_ub + p*eta; negative eta can flip the
+        sign) must surface as a ValueError, not silently expand the safe
+        set."""
+        class _NegativeGammaGains:
+            p = 1.0
+            q = 1.0
+            delta_safe = 0.5
+            Gamma = -0.20
+        with self.assertRaises(ValueError):
+            PrismConfig.from_rebus_synthesis(_NegativeGammaGains())
+
+    def test_zero_cbf_robust_gamma_accepted(self) -> None:
+        """The default 0.0 must remain valid (non-strict inequality)."""
+        cfg = PrismConfig(cbf_robust_gamma=0.0)
+        self.assertEqual(cfg.cbf_robust_gamma, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
