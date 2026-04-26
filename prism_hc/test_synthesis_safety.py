@@ -154,39 +154,28 @@ class SynthesisSafetyTests(unittest.TestCase):
     # ------------------------------------------------------------------
     # Test 3: behavioral observability of synthesized Gamma
     # ------------------------------------------------------------------
-    def test_synthesized_gamma_observably_blocks_unsafe_state(self) -> None:
-        """Synthesized Gamma flips the post-forward CBF margin sign.
+    def test_synthesized_gamma_shifts_post_step_margin_by_exactly_gamma(self) -> None:
+        """Synthesized Gamma shifts the post-forward CBF margin by exactly -Gamma.
 
         Mirrors test_forward.test_telemetry_cbf_uses_robust_delta_eff but
         anchored to a *solver-produced* Gamma rather than a hand-set 0.20.
-        With fresh init (S=0), one forward step on x=zeros yields S_post
-        ~= 1 - exp(-lam_S) ~= 0.139 (drift = 0 because x=0). The post-clamp
-        E is 0 (gate closed because dwell=0), so:
-            rec.cbf = S_post - 0 - delta_eff = 0.139 - (0.05 + Gamma).
-        For Gamma > 0.09, rec.cbf < 0; for Gamma = 0, rec.cbf > 0.
-        """
-        # Defensive skip: if the synthesizer happens to produce Gamma below
-        # the sign-flip threshold, this assertion shape doesn't apply.
-        # Realistic run_demo(seed=5) Gamma is well above this.
-        gamma_min_for_flip = 0.10
-        if self.gains.Gamma <= gamma_min_for_flip:
-            self.skipTest(
-                f"gains.Gamma={self.gains.Gamma:.4f} <= {gamma_min_for_flip} "
-                f"is too small to flip the CBF margin sign at fresh-init "
-                f"S_post~0.139; the assertion in this test only applies "
-                f"above the flip threshold."
-            )
 
+        At fresh init (S=0) with x=zeros, the joint-CBF E-clamp leaves E_post
+        identical across the synth and Gamma=0 configs: the LATCH gate is
+        closed (dwell=0), so gated_target=0, so E_post = exp_euler(0, 0, ...)
+        = 0 in both cases (the clamp can only reduce E). LATCH's S update
+        doesn't depend on cbf_robust_gamma, so S_post is also identical.
+        The post-step margin therefore satisfies
+            rec_ng.cbf - rec.cbf == gains.Gamma
+        exactly (modulo float precision). This holds for ANY gains.Gamma > 0
+        — small or large — so the assertion needs no sign-flip threshold.
+        Catches regressions where Gamma silently drops out of the wire-up
+        (rec_ng.cbf - rec.cbf would equal 0) regardless of Gamma magnitude.
+        """
         x = torch.zeros(1, self.cfg.d_in)
 
-        # Synthesized config: Gamma > flip threshold => margin < 0.
+        # Synthesized config (cbf_robust_gamma = gains.Gamma).
         _y, _state, _belief, rec = self.model.forward(x, self.state, self.belief)
-        self.assertLess(
-            rec.cbf,
-            0.0,
-            f"synthesized Gamma={self.gains.Gamma:.4f} did not produce a "
-            f"negative post-forward CBF margin (rec.cbf={rec.cbf:.6f})",
-        )
 
         # Negative-control twin: same cfg with cbf_robust_gamma zeroed.
         # Reseeding torch before constructing the twin model gives bit-
@@ -200,12 +189,26 @@ class SynthesisSafetyTests(unittest.TestCase):
         _y_ng, _state_ng, _belief_ng, rec_ng = model_ng.forward(
             x, state_ng, belief_ng
         )
-        self.assertGreater(
-            rec_ng.cbf,
-            0.0,
-            f"Gamma=0 twin did not produce a positive margin "
-            f"(rec_ng.cbf={rec_ng.cbf:.6f}); the sign flip in the synthesized "
-            f"config is therefore not driven by Gamma alone.",
+
+        margin_shift = rec_ng.cbf - rec.cbf
+        # Tolerance scales with Gamma so the same assertion works whether
+        # Gamma is tiny (e.g., 0.0027) or large (e.g., 1e5). The CBF margin
+        # is computed in float32 (one torch ULP ~= 1.2e-7 relative), so the
+        # relative term must accommodate at least a few float32 ULPs.
+        # Absolute 1e-5 covers small-Gamma cases where the relative term
+        # underflows below float32 precision.
+        tol = max(1e-5, 1e-6 * abs(self.gains.Gamma))
+        self.assertAlmostEqual(
+            margin_shift,
+            self.gains.Gamma,
+            delta=tol,
+            msg=(
+                f"Gamma not observable at runtime: rec_ng.cbf - rec.cbf "
+                f"= {margin_shift:.6g}, expected gains.Gamma "
+                f"= {self.gains.Gamma:.6g} (delta_eff difference). "
+                f"This signals a regression in cbf_robust_gamma propagation "
+                f"or in the LATCH joint-CBF margin computation."
+            ),
         )
 
 
