@@ -6,8 +6,9 @@ Use `C:\Users\jjor3\Dev\PRISM-HC` as the canonical repository root. The old OneD
 
 This repository contains both reference material and runnable project source.
 
-- **`AI Papers/`** is the specification / research corpus: markdown, PDF, TeX, DOCX, MATLAB, the REBUS identification scaffold (`rebus_identification.py` and friends), and the original Gemini stubs. Treat it as build context, not as a Python package directory.
+- **`AI Papers/`** is the specification / research corpus: markdown, PDF, TeX, DOCX, MATLAB, and the original Gemini stubs. Treat it as build context, not as a Python package directory.
 - **`prism_hc/`** at the repo root is the runnable PRISM-HC-lite PyTorch prototype (PrismHCLite + LATCH supervisor + REBUS scalar state + frozen anchor core + null-space adapter).
+- **`rebus_synthesis/`** at the repo root is the REBUS identification + supervisor-gain synthesis package (numpy + optional cvxpy). `prism_hc/synthesis_demo.py` consumes it via `from rebus_synthesis import run_demo, cp`.
 
 ## Commands
 
@@ -24,13 +25,12 @@ Run tests and demos:
 
 ```powershell
 .\.venv\Scripts\python -m unittest discover -s . -p "test_*.py" -v
-.\.venv\Scripts\python -m unittest discover -s "AI Papers" -p "test_*.py" -v
 .\.venv\Scripts\python prism_hc\demo.py
-.\.venv\Scripts\python "AI Papers\rebus_identification_demo.py" --smoke-test
-.\.venv\Scripts\python "AI Papers\rebus_identification_demo.py" --T 40 --nx 2 --B 6 --block-len 8 --solver SCS
+.\.venv\Scripts\python -m rebus_synthesis.demo --smoke-test
+.\.venv\Scripts\python -m rebus_synthesis.demo --T 40 --nx 2 --B 6 --block-len 8 --solver SCS
 ```
 
-The two `unittest discover` invocations are separate because `AI Papers` has a space in its name and is not an importable Python package, so a root-level discover does not recurse into it. The first picks up `prism_hc\test_*.py` (20 PRISM-HC-lite tests); the second picks up `AI Papers\test_rebus_identification.py` (6 REBUS scaffold tests).
+The single `unittest discover` invocation picks up tests from both `prism_hc/` and `rebus_synthesis/` (both are importable packages at repo root). Solver-dependent REBUS tests are skipped automatically when cvxpy is not installed.
 
 ## Mental Map
 
@@ -72,12 +72,12 @@ Core interpretation: HELIX-FEP is a later research target with bounded excursion
 
 Primary files:
 
-- `AI Papers\rebus_identification.py`
-- `AI Papers\test_rebus_identification.py`
-- `AI Papers\rebus_identification_demo.py`
+- `rebus_synthesis\identification.py`
+- `rebus_synthesis\test_identification.py`
+- `rebus_synthesis\demo.py`
 - `AI Papers\rebus_control_framework.tex`
 
-Core interpretation: this is the current runnable scaffold. `rebus_identification.py` estimates robust one-sided safety constants and synthesizes supervisor gains. CVXPY is required for the full solver path; smoke tests can skip it.
+Core interpretation: this is the current runnable scaffold. `rebus_synthesis/identification.py` estimates robust one-sided safety constants and synthesizes supervisor gains. CVXPY is required for the full solver path; smoke tests can skip it.
 
 ### Reservoir, routing, and gradient-free ideas
 
@@ -146,5 +146,5 @@ rg -n -i "salience|precision|plasticity|entropy|attractor|gain|rebound|dissociat
 - Preserve the distinction between specification documents and executable code.
 - Prefer building small tested primitives before broad architecture integration.
 - Keep generated caches and solver artifacts out of git.
-- Use `rebus_identification.py` as the first executable reference for control/safety work.
+- Use `rebus_synthesis/identification.py` as the first executable reference for control/safety work.
 - Treat `Practical LLM dev design.md` as a corrective engineering lens when architecture documents overclaim safety, invariance, or production readiness.
