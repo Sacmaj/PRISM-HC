@@ -1,4 +1,4 @@
-"""Unit-test scaffold for `rebus_identification.py`.
+"""Unit-test scaffold for `rebus_synthesis.identification`.
 
 This file uses Python's built-in `unittest` framework so it can run without
 pytest. Solver-dependent smoke tests are skipped automatically when cvxpy is
@@ -12,7 +12,7 @@ import unittest
 
 import numpy as np
 
-import rebus_identification as rid
+from rebus_synthesis import identification as rid
 
 
 class TestSyntheticScaffold(unittest.TestCase):

@@ -1,37 +1,26 @@
 """End-to-end smoke check: REBUS synthesis scaffold drives the prototype config.
 
-The scaffold under `AI Papers/rebus_identification.py` is currently
-out-of-tree (not committed to this repo). This demo handles three cases:
+The scaffold lives at `rebus_synthesis/` (sibling package). Two cases:
 
-  1. Scaffold present + cvxpy available: run the full synthesis pipeline
+  1. cvxpy installed: run the full synthesis pipeline
      (make_synthetic_rebus_data -> identify_rebus_bounds ->
      synthesize_supervisor_gains) and feed the gains into PrismConfig.
-  2. Scaffold present but cvxpy missing: skip the LMI solve and exercise
-     the wire-up with a fabricated SupervisorGains-shaped object.
-  3. Scaffold absent (default for fresh clones): same fallback as (2).
+  2. cvxpy missing: skip the LMI solve and exercise the wire-up with a
+     fabricated SupervisorGains-shaped object.
 
-Cases (2) and (3) prove that PrismConfig.from_rebus_synthesis is
-import-clean — it duck-types its `gains` argument and never imports
-from `AI Papers/`, so the prototype's wire-up surface is testable
-without the out-of-tree scaffold.
+PrismConfig.from_rebus_synthesis duck-types its `gains` argument and
+never imports from `rebus_synthesis/`, so the prototype's wire-up
+surface is testable without cvxpy via the StubSupervisorGains path.
 
 Run:  python -m prism_hc.synthesis_demo
 """
 
 from __future__ import annotations
 
-import importlib.util
 import math
-import os
-import sys
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
 
 import torch
-
-if __package__ in (None, ""):
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from prism_hc.config import PrismConfig
 from prism_hc.model import PrismHCLite
@@ -40,10 +29,10 @@ from prism_hc.telemetry import TelemetryRecorder
 
 @dataclass(frozen=True)
 class StubSupervisorGains:
-    """Stand-in for SupervisorGains when the AI Papers scaffold isn't present.
+    """Stand-in for SupervisorGains when cvxpy isn't installed.
 
-    Field names and semantics match SupervisorGains at
-    AI Papers/rebus_identification.py:75 — PrismConfig.from_rebus_synthesis
+    Field names and semantics match SupervisorGains in
+    rebus_synthesis.identification — PrismConfig.from_rebus_synthesis
     duck-types these attributes, so the wire-up exercises identically.
 
     Values chosen so the default heuristic mapping (0.5/p, 0.5/q,
@@ -57,58 +46,29 @@ class StubSupervisorGains:
     Gamma: float = 0.50
 
 
-def find_rebus_module_path() -> Optional[Path]:
-    """Walk up from this file looking for AI Papers/rebus_identification.py."""
-    here = Path(__file__).resolve()
-    for ancestor in [here.parent, *here.parents]:
-        candidate = ancestor / "AI Papers" / "rebus_identification.py"
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def load_rebus_module(target: Path):
-    """Load rebus_identification.py from `target` via importlib.
-
-    The folder name has a space, so it can't be imported as a package.
-    """
-    spec = importlib.util.spec_from_file_location("rebus_identification", str(target))
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Failed to build module spec for {target}")
-    module = importlib.util.module_from_spec(spec)
-    # Register before exec_module: Python 3.10's @dataclass machinery looks
-    # up cls.__module__ in sys.modules during class construction, which
-    # fails for modules loaded via importlib that haven't been registered.
-    sys.modules["rebus_identification"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def synthesize_or_stub() -> tuple[object, str]:
     """Produce a SupervisorGains-shaped object, with provenance label.
 
     Returns (gains, source) where source is one of:
-      'pipeline' — full synthesis ran (scaffold + cvxpy)
-      'stub'     — scaffold absent or cvxpy missing; using StubSupervisorGains
+      'pipeline' — full synthesis ran (cvxpy installed)
+      'stub'     — cvxpy missing; using StubSupervisorGains
     """
-    target = find_rebus_module_path()
-    if target is None:
+    try:
+        from rebus_synthesis import run_demo, cp
+    except ImportError:
         print(
-            "AI Papers/rebus_identification.py not found in the repo tree; "
+            "rebus_synthesis package not importable; "
             "using StubSupervisorGains to exercise the wire-up."
         )
         return StubSupervisorGains(), "stub"
-    rid = load_rebus_module(target)
-    if rid.cp is None:
+    if cp is None:
         print(
-            "scaffold present but cvxpy not installed; using "
+            "rebus_synthesis present but cvxpy not installed; using "
             "StubSupervisorGains to exercise the wire-up."
         )
         return StubSupervisorGains(), "stub"
     print("running REBUS synthesis pipeline (small synthetic scaffold)...")
-    result = rid.run_demo(
-        T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS"
-    )
+    result = run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS")
     return result["gains"], "pipeline"
 
 

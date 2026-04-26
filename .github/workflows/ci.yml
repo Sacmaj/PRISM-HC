@@ -85,9 +85,6 @@ jobs:
       - name: Show installed versions
         run: python -c "import numpy, cvxpy, scs, torch; print('numpy', numpy.__version__); print('cvxpy', cvxpy.__version__); print('scs', scs.__version__); print('torch', torch.__version__)"
 
-      - name: REBUS scaffold tests (AI Papers/test_rebus_identification.py)
-        run: python -m unittest discover -s "AI Papers" -p "test_*.py" -v
-
       - name: Synthesis pipeline (asserts [pipeline] provenance, not [stub])
         run: |
           # Pipe to tee so we keep the live log AND a file for grep below.

@@ -114,7 +114,7 @@ class PrismConfig:
 
         `gains` is duck-typed: it must expose `.p`, `.q`, `.delta_safe` (and
         optionally `.Gamma`) attributes, matching the SupervisorGains dataclass
-        in AI Papers/rebus_identification.py.
+        in rebus_synthesis.identification.
 
         The default `gamma_map` is a HEURISTIC, not a derivation. The
         synthesizer's composite-Lyapunov coefficients (p, q, delta_safe) and

@@ -1,6 +1,6 @@
 ﻿# PRISM-HC Local Setup
 
-This repository contains both reference material and runnable project source. The `AI Papers/` directory holds the specification / research corpus (markdown, PDF, TeX, DOCX, MATLAB, the REBUS identification scaffold, and the original Gemini stubs) — treat it as build context. Project source lives at the repo root: today that is `prism_hc/`, the PRISM-HC-lite PyTorch prototype.
+This repository contains both reference material and runnable project source. The `AI Papers/` directory holds the specification / research corpus (markdown, PDF, TeX, DOCX, MATLAB, and the original Gemini stubs) — treat it as build context. Project source lives at the repo root: `prism_hc/` (PRISM-HC-lite PyTorch prototype) and `rebus_synthesis/` (REBUS identification + supervisor-gain synthesis, numpy + optional cvxpy).
 
 Canonical local path:
 
@@ -40,14 +40,13 @@ Future Codex work should use this directory as the working root.
 
 ## Verify
 
-Run the unit tests (two discover passes — `AI Papers` contains a space and is not a Python package, so it must be discovered separately):
+Run the unit tests (single discover pass — `prism_hc/` and `rebus_synthesis/` are both importable packages at repo root):
 
 ```powershell
 .\.venv\Scripts\python -m unittest discover -s . -p "test_*.py" -v
-.\.venv\Scripts\python -m unittest discover -s "AI Papers" -p "test_*.py" -v
 ```
 
-The first command runs the 20 PRISM-HC-lite tests under `prism_hc\test_*.py`; the second runs the 6 REBUS scaffold tests in `AI Papers\test_rebus_identification.py`.
+This picks up both the PRISM-HC-lite tests under `prism_hc\test_*.py` and the REBUS scaffold tests in `rebus_synthesis\test_identification.py`. Solver-dependent REBUS tests skip automatically when cvxpy is not installed.
 
 Run the PRISM-HC-lite end-to-end demo (60 steps, lands one plasticity commit at t=30):
 
@@ -58,13 +57,13 @@ Run the PRISM-HC-lite end-to-end demo (60 steps, lands one plasticity commit at 
 Run the REBUS lightweight smoke path:
 
 ```powershell
-.\.venv\Scripts\python "AI Papers\rebus_identification_demo.py" --smoke-test
+.\.venv\Scripts\python -m rebus_synthesis.demo --smoke-test
 ```
 
 Run the full CVXPY-backed demo:
 
 ```powershell
-.\.venv\Scripts\python "AI Papers\rebus_identification_demo.py" --T 40 --nx 2 --B 6 --block-len 8 --solver SCS
+.\.venv\Scripts\python -m rebus_synthesis.demo --T 40 --nx 2 --B 6 --block-len 8 --solver SCS
 ```
 
 ## Fast Navigation
