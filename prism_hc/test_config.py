@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from prism_hc.config import PrismConfig
+from prism_hc.config import PrismConfig, default_gamma_map
 
 
 class _FakeGains:
@@ -102,6 +102,30 @@ class PrismConfigNormalizationTests(unittest.TestCase):
         """The default 0.0 must remain valid (non-strict inequality)."""
         cfg = PrismConfig(cbf_robust_gamma=0.0)
         self.assertEqual(cfg.cbf_robust_gamma, 0.0)
+
+
+class DefaultGammaMapTests(unittest.TestCase):
+    def test_formula_pinned(self) -> None:
+        class G:
+            p, q, delta_safe = 2.0, 4.0, 0.6
+        self.assertEqual(default_gamma_map(G()), (0.25, 0.125, 0.30))
+
+    def test_default_used_by_from_rebus_synthesis(self) -> None:
+        gains = _FakeGains()
+        cfg = PrismConfig.from_rebus_synthesis(gains)
+        gs, gd, ge = default_gamma_map(gains)
+        self.assertEqual(cfg.gamma_s, gs)
+        self.assertEqual(cfg.gamma_d, gd)
+        self.assertEqual(cfg.gamma_eps, ge)
+
+    def test_explicit_default_passed_as_gamma_map(self) -> None:
+        gains = _FakeGains()
+        a = PrismConfig.from_rebus_synthesis(gains)
+        b = PrismConfig.from_rebus_synthesis(gains, gamma_map=default_gamma_map)
+        self.assertEqual(
+            (a.gamma_s, a.gamma_d, a.gamma_eps),
+            (b.gamma_s, b.gamma_d, b.gamma_eps),
+        )
 
 
 if __name__ == "__main__":
