@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 
 import torch
@@ -100,6 +102,83 @@ class ForwardSmokeTests(unittest.TestCase):
         # Priming was drained
         self.assertLess(float(self.state.P.item()), 1.0)
         self.assertEqual(self.state.commits, 1)
+
+
+class StateFactoryDeviceTests(unittest.TestCase):
+    """init_state / init_belief must produce tensors on the model's device."""
+
+    def test_init_state_uses_module_device(self) -> None:
+        cfg = PrismConfig()
+        model = PrismHCLite(cfg)
+        ref = next(model.parameters())
+        state = model.init_state(batch=2)
+        for l, R in state.R_l.items():
+            self.assertEqual(R.device, ref.device, f"R_l[{l}] off device")
+            self.assertEqual(R.dtype, ref.dtype, f"R_l[{l}] wrong dtype")
+        for name, tensor in (
+            ("E", state.E), ("S", state.S), ("rho", state.rho),
+            ("chi", state.chi), ("alpha", state.alpha), ("h", state.h),
+            ("P", state.P),
+        ):
+            self.assertEqual(tensor.device, ref.device, f"{name} off device")
+            self.assertEqual(tensor.dtype, ref.dtype, f"{name} wrong dtype")
+        # dwell_counter intentionally stays integer; only device must match.
+        self.assertEqual(state.dwell_counter.device, ref.device)
+        self.assertEqual(state.dwell_counter.dtype, torch.long)
+
+    def test_init_belief_uses_module_device(self) -> None:
+        cfg = PrismConfig()
+        model = PrismHCLite(cfg)
+        ref = next(model.parameters())
+        belief = model.init_belief(batch=2)
+        for l in range(cfg.L):
+            for name, tensor in (
+                ("mu_l", belief.mu_l[l]),
+                ("epsilon_l", belief.epsilon_l[l]),
+                ("pi_l", belief.pi_l[l]),
+            ):
+                self.assertEqual(tensor.device, ref.device, f"{name}[{l}] off device")
+                self.assertEqual(tensor.dtype, ref.dtype, f"{name}[{l}] wrong dtype")
+
+
+class NonDefaultDepthTests(unittest.TestCase):
+    """L != 2 must work end-to-end now that per-layer arrays auto-broadcast."""
+
+    def test_forward_with_L3(self) -> None:
+        torch.manual_seed(0)
+        cfg = PrismConfig(L=3)  # default delta_l=0.30, kappa_l=0.50 must broadcast
+        model = PrismHCLite(cfg)
+        state = model.init_state(batch=1)
+        belief = model.init_belief(batch=1)
+        for t in range(15):
+            x = 0.05 * torch.sin(torch.tensor([t / 3.0])).expand(1, cfg.d_in)
+            x = x + 0.02 * torch.randn(1, cfg.d_in)
+            _y, state, belief, _rec = model.forward(x, state, belief)
+        self.assertEqual(len(state.R_l), 3)
+        for l in range(3):
+            self.assertTrue(torch.all(torch.isfinite(state.R_l[l])))
+            self.assertTrue(torch.all(torch.isfinite(belief.mu_l[l])))
+
+
+class DemoSmokeTests(unittest.TestCase):
+    """The demo is the headline smoke run; importing and calling main() locks
+    in (a) that no torch API used in the demo is unsupported on torch>=2.0
+    (notably the previous `torch.randn_like(generator=)` regression) and
+    (b) that the t=30 commit still lands.
+    """
+
+    def test_demo_runs_to_completion_and_commits(self) -> None:
+        from prism_hc import demo  # local import keeps test isolation
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = demo.main()
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        # The demo prints a final OK and exactly one commit attempt.
+        self.assertIn("OK", out)
+        self.assertIn("commits_attempted=1", out)
+        self.assertIn("committed=True", out)
 
 
 if __name__ == "__main__":

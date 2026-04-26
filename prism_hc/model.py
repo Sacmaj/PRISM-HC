@@ -61,8 +61,18 @@ class PrismHCLite(nn.Module):
 
     # ---- state init ------------------------------------------------------
 
+    def _ref_device_dtype(self) -> Tuple[torch.device, torch.dtype]:
+        """Anchor controller/belief tensors to the same device & float dtype
+        as the module's parameters. Without this, `model.to('cuda'); state =
+        model.init_state()` would mix CPU state with CUDA activations and
+        every gating computation would raise a device-mismatch error.
+        """
+        ref = next(self.parameters())
+        return ref.device, ref.dtype
+
     def init_state(self, batch: int = 1) -> ControllerState:
-        z = lambda: torch.zeros(batch)
+        device, dtype = self._ref_device_dtype()
+        z = lambda: torch.zeros(batch, device=device, dtype=dtype)
         return ControllerState(
             R_l={l: z() for l in range(self.cfg.L)},
             alpha=z(),
@@ -71,17 +81,21 @@ class PrismHCLite(nn.Module):
             S=z(),
             rho=z(),
             chi=z(),
-            P=torch.ones(batch),
-            dwell_counter=torch.zeros(batch, dtype=torch.long),
+            P=torch.ones(batch, device=device, dtype=dtype),
+            dwell_counter=torch.zeros(batch, dtype=torch.long, device=device),
             commits=0,
         )
 
     def init_belief(self, batch: int = 1) -> BeliefState:
-        z = lambda: torch.zeros(batch, self.cfg.d_hidden)
+        device, dtype = self._ref_device_dtype()
+        z = lambda: torch.zeros(batch, self.cfg.d_hidden, device=device, dtype=dtype)
         return BeliefState(
             mu_l={l: z() for l in range(self.cfg.L)},
             epsilon_l={l: z() for l in range(self.cfg.L)},
-            pi_l={l: torch.ones(batch, self.cfg.d_hidden) for l in range(self.cfg.L)},
+            pi_l={
+                l: torch.ones(batch, self.cfg.d_hidden, device=device, dtype=dtype)
+                for l in range(self.cfg.L)
+            },
         )
 
     def reset_episode(self, state: ControllerState) -> ControllerState:

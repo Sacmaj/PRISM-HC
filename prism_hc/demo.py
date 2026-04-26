@@ -65,8 +65,14 @@ def main() -> int:
         _y, state, belief, rec = model.forward(x, state, belief)
         tele.append_step(rec)
         if t == 30:
+            # torch.randn_like has no generator kwarg in the documented
+            # torch>=2.0 API; some 2.x releases enforce the signature and
+            # raise TypeError. Use torch.randn(shape, generator=...) and
+            # carry over dtype/device from each parameter.
             grads = {
-                name: torch.randn_like(p, generator=gen) * 0.01
+                name: torch.randn(
+                    p.shape, generator=gen, dtype=p.dtype, device=p.device
+                ) * 0.01
                 for name, p in model.named_parameters()
                 if p.requires_grad
             }

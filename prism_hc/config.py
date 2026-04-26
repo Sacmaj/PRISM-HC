@@ -3,12 +3,20 @@
 All time constants are per-step (dt=1.0 by default).
 All gating thresholds and CBF parameters live here so the model has
 a single source of truth and can be re-tuned without code edits.
+
+Per-layer arrays (`delta_l`, `kappa_l`) accept a scalar, a length-1
+sequence, or a length-`L` sequence. Anything else raises in
+`__post_init__` so a mismatched depth fails loudly instead of
+producing an `IndexError` mid-forward.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Sequence, Tuple, Union
+
+
+PerLayer = Union[float, Sequence[float]]
 
 
 @dataclass
@@ -56,7 +64,24 @@ class PrismConfig:
     lam_h: float = 0.03
     eta_h: float = 0.05
 
-    # Precision modulation per-layer
-    delta_l: Tuple[float, ...] = (0.30, 0.30)
-    kappa_l: Tuple[float, ...] = (0.50, 0.50)
+    # Precision modulation per-layer (scalar or length-L sequence)
+    delta_l: PerLayer = 0.30
+    kappa_l: PerLayer = 0.50
     log_pi_clamp: Tuple[float, float] = (-6.0, 6.0)
+
+    def __post_init__(self) -> None:
+        self.delta_l = self._normalize_per_layer(self.delta_l, "delta_l")
+        self.kappa_l = self._normalize_per_layer(self.kappa_l, "kappa_l")
+
+    def _normalize_per_layer(self, val: PerLayer, name: str) -> Tuple[float, ...]:
+        if isinstance(val, (int, float)):
+            return tuple([float(val)] * self.L)
+        seq = tuple(float(v) for v in val)
+        if len(seq) == 1:
+            return seq * self.L
+        if len(seq) == self.L:
+            return seq
+        raise ValueError(
+            f"{name} must be a scalar, length-1 sequence, or length-{self.L} "
+            f"sequence to match L; got length {len(seq)}"
+        )
