@@ -11,6 +11,36 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional, Tuple, Union
 
 
+def default_gamma_map(gains: Any) -> Tuple[float, float, float]:
+    """Heuristic mapping from synthesizer Lyapunov coefficients to R-dynamics gammas.
+
+    Returns ``(gamma_s, gamma_d, gamma_eps) = (0.5/p, 0.5/q, 0.5*delta_safe)``
+    where ``(p, q, delta_safe)`` come from
+    :func:`rebus_synthesis.identification.synthesize_supervisor_gains`.
+
+    This is a HEURISTIC, not a derivation. The two coefficient sets are
+    mathematically distinct objects:
+
+    - ``(p, q, delta_safe)`` are composite-Lyapunov certificate coefficients
+      from the S-procedure / LMI synthesis at
+      ``rebus_synthesis/identification.py:1005-1036``.
+    - ``(gamma_s, gamma_d, gamma_eps)`` are parameters of the R-dynamics ODE
+      in ``AI Papers/rebus_control_framework.tex`` eq. (R_dynamics, line 161)
+      and the majorant ``nu(t)`` (line 202). They are *inputs* to the model,
+      not derivable from the synthesizer's Lyapunov bounds.
+
+    The framework provides no inverse map. This default exists only as a
+    smoke-test starting point that scales with certificate tightness; pass
+    ``gamma_map=...`` to :meth:`PrismConfig.from_rebus_synthesis` for any
+    use beyond exercising the wire-up.
+
+    ``gains`` is duck-typed: must expose ``.p``, ``.q``, ``.delta_safe``.
+    Caller's contract: ``p > 0`` and ``q > 0`` (guaranteed by
+    ``SupervisorGains`` LMI feasibility — no zero-guard here).
+    """
+    return (0.5 / gains.p, 0.5 / gains.q, 0.5 * gains.delta_safe)
+
+
 @dataclass
 class PrismConfig:
     # Topology
@@ -116,15 +146,9 @@ class PrismConfig:
         optionally `.Gamma`) attributes, matching the SupervisorGains dataclass
         in rebus_synthesis.identification.
 
-        The default `gamma_map` is a HEURISTIC, not a derivation. The
-        synthesizer's composite-Lyapunov coefficients (p, q, delta_safe) and
-        the REBUS-update forcing-term coefficients (gamma_s, gamma_d,
-        gamma_eps) are mathematically distinct objects. Default:
-
-            (gamma_s, gamma_d, gamma_eps) = (0.5/p, 0.5/q, 0.5*delta_safe)
-
-        Override via `gamma_map=lambda g: (...)` if you have a principled
-        relationship in mind.
+        By default, ``(gamma_s, gamma_d, gamma_eps)`` are derived via
+        :func:`default_gamma_map` (a documented heuristic — see its docstring
+        for the framework gap). Pass ``gamma_map=...`` to override.
 
         `Gamma` (read via getattr so duck-typed gains without it still work)
         is the upper bound on disturbance-driven Lyapunov increase under the
@@ -134,7 +158,7 @@ class PrismConfig:
         in **overrides to scale or zero this contribution at the call site.
         """
         if gamma_map is None:
-            gamma_map = lambda g: (0.5 / g.p, 0.5 / g.q, 0.5 * g.delta_safe)
+            gamma_map = default_gamma_map
         gs, gd, ge = gamma_map(gains)
         # Pop so an explicit `cbf_robust_gamma` in overrides wins over the
         # gains-derived value without colliding on the keyword argument.
