@@ -103,6 +103,43 @@ class PrismConfigNormalizationTests(unittest.TestCase):
         cfg = PrismConfig(cbf_robust_gamma=0.0)
         self.assertEqual(cfg.cbf_robust_gamma, 0.0)
 
+    def test_delta_eff_at_one_rejected_direct(self) -> None:
+        """delta_eff == 1.0 makes the safe set {S>=delta_eff, S in [0,1]} a
+        single point with measure zero — treat the boundary as infeasible."""
+        with self.assertRaises(ValueError) as ctx:
+            PrismConfig(cbf_delta=0.05, cbf_robust_gamma=0.95)
+        msg = str(ctx.exception)
+        self.assertIn("cbf_delta", msg)
+        self.assertIn("cbf_robust_gamma", msg)
+
+    def test_delta_eff_above_one_rejected_direct(self) -> None:
+        """delta_eff > 1 makes the runtime CBF safe set empty (S is clamped to
+        [0,1]); refuse loudly at construction rather than building a config
+        that LATCH can never satisfy."""
+        with self.assertRaises(ValueError) as ctx:
+            PrismConfig(cbf_delta=0.05, cbf_robust_gamma=10.0)
+        self.assertIn("safe set", str(ctx.exception))
+
+    def test_delta_eff_above_one_rejected_via_synthesis(self) -> None:
+        """A misconverged synthesizer producing a runaway Gamma must trip the
+        same guard via from_rebus_synthesis. Mirrors the SCS regression that
+        motivated the Clarabel switch (Gamma ~= 125448 with default cbf_delta
+        = 0.05)."""
+        class _RunawayGammaGains:
+            p = 1.0
+            q = 1.0
+            delta_safe = 0.5
+            Gamma = 125448.0
+        with self.assertRaises(ValueError):
+            PrismConfig.from_rebus_synthesis(_RunawayGammaGains())
+
+    def test_delta_eff_just_below_one_accepted(self) -> None:
+        """Sanity: a delta_eff strictly less than 1 must pass. Anchors the
+        boundary so future tightening of the threshold (e.g., to 0.99) is a
+        deliberate change, not an accident."""
+        cfg = PrismConfig(cbf_delta=0.05, cbf_robust_gamma=0.94)
+        self.assertEqual(cfg.cbf_delta + cfg.cbf_robust_gamma, 0.99)
+
 
 class DefaultGammaMapTests(unittest.TestCase):
     def test_formula_pinned(self) -> None:

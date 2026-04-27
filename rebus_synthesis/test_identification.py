@@ -214,7 +214,7 @@ class TestSyntheticScaffold(unittest.TestCase):
 
     @unittest.skipIf(rid.cp is None, "cvxpy not installed")
     def test_end_to_end_smoke(self) -> None:
-        result = rid.run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS")
+        result = rid.run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="CLARABEL")
         bounds = result["bounds"]
         gains = result["gains"]
         self.assertTrue(np.all(np.isfinite(bounds.P)))
