@@ -30,16 +30,16 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
 
-      - name: Verify cvxpy/scs are not imported by in-repo code
+      - name: Verify cvxpy/scs/clarabel are not imported by in-repo code
         run: |
           # Boundary set after module name covers every legal Python form:
           #   end-of-line, whitespace ("import cvxpy as cp"), "." (submodule),
           #   "," ("import cvxpy, numpy"), ";" ("import cvxpy; foo()").
-          if grep -rE '^[[:space:]]*(import|from)[[:space:]]+(cvxpy|scs)($|[[:space:].,;])' prism_hc/; then
-            echo "::error::cvxpy/scs import found in prism_hc/; update CI install or remove the import"
+          if grep -rE '^[[:space:]]*(import|from)[[:space:]]+(cvxpy|scs|clarabel)($|[[:space:].,;])' prism_hc/; then
+            echo "::error::cvxpy/scs/clarabel import found in prism_hc/; update CI install or remove the import"
             exit 1
           fi
-          echo "ok: prism_hc/ has no cvxpy/scs imports"
+          echo "ok: prism_hc/ has no cvxpy/scs/clarabel imports"
 
       - name: Install runtime deps (slim, no cvxpy/scs)
         run: |
@@ -83,7 +83,7 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: Show installed versions
-        run: python -c "import numpy, cvxpy, scs, torch; print('numpy', numpy.__version__); print('cvxpy', cvxpy.__version__); print('scs', scs.__version__); print('torch', torch.__version__)"
+        run: python -c "import numpy, cvxpy, scs, clarabel, torch; print('numpy', numpy.__version__); print('cvxpy', cvxpy.__version__); print('scs', scs.__version__); print('clarabel', clarabel.__version__); print('torch', torch.__version__)"
 
       - name: Run unit tests with cvxpy installed (exercises @skipIf(cp is None) paths)
         # The matrix `test` job runs the same discover but with cvxpy uninstalled,

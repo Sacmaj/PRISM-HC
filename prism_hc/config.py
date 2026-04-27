@@ -116,6 +116,23 @@ class PrismConfig:
                 f"a negative robustness offset would expand the CBF safe set "
                 f"and invert the intended tightening."
             )
+        # Joint-CBF safe set is {S in [0,1] : S - cbf_a*E^p >= delta_eff} where
+        # delta_eff = cbf_delta + cbf_robust_gamma; S is clamped to [0,1] in
+        # latch.py:67. If delta_eff >= 1, no S can satisfy the bound, so the
+        # safe set is empty and LATCH can never commit. This slipped through
+        # silently before: a misconverged synthesizer producing a runaway
+        # `Gamma` would build a config that refuses every action with no
+        # diagnostic. Surface it at construction instead.
+        delta_eff = self.cbf_delta + self.cbf_robust_gamma
+        if delta_eff >= 1.0:
+            raise ValueError(
+                f"cbf_delta + cbf_robust_gamma must be < 1 (got "
+                f"{self.cbf_delta} + {self.cbf_robust_gamma} = {delta_eff}); "
+                f"the runtime joint-CBF safe set "
+                f"{{S in [0,1] : S - cbf_a*E^p >= delta_eff}} would be empty, "
+                f"so LATCH could never commit. Most likely cause: the upstream "
+                f"synthesizer emitted a misconverged Gamma."
+            )
 
     def _normalize_per_layer(
         self, name: str, value: Union[float, Tuple[float, ...]]

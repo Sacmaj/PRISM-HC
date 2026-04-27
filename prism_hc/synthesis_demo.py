@@ -68,7 +68,7 @@ def synthesize_or_stub() -> tuple[object, str]:
         )
         return StubSupervisorGains(), "stub"
     print("running REBUS synthesis pipeline (small synthetic scaffold)...")
-    result = run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS")
+    result = run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="CLARABEL")
     return result["gains"], "pipeline"
 
 

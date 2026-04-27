@@ -29,9 +29,9 @@ class SynthesisSafetyTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        # Mirror synthesis_demo.py:71 exactly. SCS is deterministic given seed,
-        # so all three tests see the same gains across runs.
-        result = run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="SCS")
+        # Mirror synthesis_demo.py:71 exactly. Clarabel is deterministic given
+        # seed, so all three tests see the same gains across runs.
+        result = run_demo(T=40, nx=2, seed=5, B=6, block_len=8, eta=0.25, solver="CLARABEL")
         cls.gains = result["gains"]
         cls.cfg = PrismConfig.from_rebus_synthesis(cls.gains)
 
@@ -70,34 +70,14 @@ class SynthesisSafetyTests(unittest.TestCase):
         S >= delta_eff = cbf_delta + Gamma. After entry, LATCH's E-clamp
         keeps the post-clamp margin >= 0 every step.
 
-        SCALE MISMATCH NOTE: the synthesizer's `Gamma` (and `p`, `q`, ...) are
-        in raw composite-Lyapunov coefficient units, not normalized to the
-        runtime CBF scale where S, E in [0,1] and cbf_delta = 0.05. At the
-        canonical scenario (run_demo seed=5, SCS) the solver currently emits
-        `Gamma ~= 125448`, which makes `delta_eff = cbf_delta + Gamma > 1` and
-        renders the runtime safe set `{S >= delta_eff}` empty. PR #8 already
-        documented that no principled inverse map exists from synthesizer
-        outputs to runtime gammas; this test treats the safe-set entry check
-        as conditional on `delta_eff < 1` and skips loudly otherwise. The skip
-        acts as a regression gate: a future PR that scales `Gamma` into the
-        runtime CBF range (or that swaps the canonical scenario) will cause
-        this test to actually run the entry+invariance assertions.
+        Earlier this test held a conditional skip for `delta_eff >= 1`,
+        because SCS at the canonical scenario emitted `Gamma ~= 125448` and
+        rendered the safe set empty. The Clarabel switch in this PR converges
+        to a finite Gamma in the runtime [0,1] range, so the skip is gone and
+        the entry+invariance assertions run unconditionally.
         """
         cfg = self.cfg
         delta_eff = cfg.cbf_delta + cfg.cbf_robust_gamma
-        if delta_eff >= 1.0:
-            self.skipTest(
-                f"delta_eff = cbf_delta + cbf_robust_gamma = "
-                f"{cfg.cbf_delta:.4g} + {cfg.cbf_robust_gamma:.4g} "
-                f"= {delta_eff:.4g} >= 1.0; the runtime CBF safe set "
-                f"{{S - cbf_a*E^p >= delta_eff, S in [0,1]}} is empty. "
-                f"This indicates a scale mismatch between the synthesizer's "
-                f"`Gamma` output and the runtime CBF's [0,1]-scale assumption. "
-                f"See PR #8 for the documented framework gap on the "
-                f"synthesizer->runtime mapping; resolving it is out of scope "
-                f"for this test PR. The entry+invariance assertions below will "
-                f"run automatically once a future PR brings delta_eff < 1."
-            )
 
         tele = TelemetryRecorder()
         N = 30
