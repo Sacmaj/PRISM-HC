@@ -135,6 +135,7 @@ def main() -> int:
         tele.append_step(rec)
         loss = F.mse_loss(y, x_next)
         loss_history.append(float(loss.item()))
+        state = model.post_score_update(state, reward=1.0 / (1.0 + loss.detach()))
 
         # Drop warm-up grads at t=10 so the t=30 commit reads only the
         # benign-phase accumulation. Otherwise let .grad accumulate.

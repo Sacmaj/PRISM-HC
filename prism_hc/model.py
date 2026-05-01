@@ -33,7 +33,13 @@ from .hierarchy import BeliefHierarchy
 from .latch import LATCHPlasticityController
 from .reservoir import SeededBilinearReservoir
 from .routing import pgstr_gate
-from .state import BeliefState, ControllerState, SafetyState
+from .state import (
+    BeliefState,
+    ControllerState,
+    ReservoirState,
+    SafetyState,
+    TopologyState,
+)
 from .telemetry import CommitRecord, StepRecord, TelemetryRecorder
 
 
@@ -60,6 +66,79 @@ class PrismHCLite(nn.Module):
         )
         self.register_buffer("pi_bar", torch.ones(cfg.L, cfg.d_hidden))
 
+    # ---- routing state ---------------------------------------------------
+
+    def _new_reservoir_state(
+        self,
+        batch: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> ReservoirState:
+        return self.reservoir.init_state(self.cfg.d_reservoir, device, dtype, batch)
+
+    @staticmethod
+    def _new_topology_state() -> TopologyState:
+        return TopologyState(
+            active_edges=0,
+            topology_mass=0.0,
+            birth_budget=0.0,
+            prune_budget=0.0,
+        )
+
+    def _ensure_route_state(
+        self, state: ControllerState, batch: int
+    ) -> ControllerState:
+        p = next(self.parameters())
+        device, dtype = p.device, p.dtype
+        if state.reservoir is None:
+            state.reservoir = self._new_reservoir_state(batch, device, dtype)
+        else:
+            rs = state.reservoir
+            if (
+                rs.route_health.shape != (self.cfg.d_reservoir,)
+                or rs.hits.shape != (self.cfg.d_reservoir,)
+            ):
+                state.reservoir = self._new_reservoir_state(batch, device, dtype)
+                state.topology = self._new_topology_state()
+                return state
+            rs.route_health = rs.route_health.to(device=device, dtype=dtype)
+            rs.hits = rs.hits.to(device=device, dtype=dtype)
+            if (
+                rs.active_paths.device != device
+                or rs.active_paths.shape != (batch, self.cfg.d_reservoir)
+            ):
+                rs.active_paths = torch.zeros(
+                    batch,
+                    self.cfg.d_reservoir,
+                    device=device,
+                    dtype=torch.bool,
+                )
+        if state.topology is None:
+            state.topology = self._new_topology_state()
+        return state
+
+    def _refresh_topology(self, state: ControllerState) -> None:
+        if state.reservoir is None:
+            state.topology = self._new_topology_state()
+            return
+        rs = state.reservoir
+        if rs.active_paths.numel() == 0:
+            active_edges = 0
+        else:
+            active_edges = int(rs.active_paths.sum(dim=-1).max().item())
+        eligible = int(
+            (rs.route_health > self.cfg.route_prune_threshold).sum().item()
+        )
+        allowed = self.cfg.d_reservoir
+        if self.cfg.route_top_k is not None:
+            allowed = min(allowed, self.cfg.route_top_k)
+        state.topology = TopologyState(
+            active_edges=active_edges,
+            topology_mass=float(rs.route_health.mean().item()),
+            birth_budget=float(max(0, allowed - active_edges)),
+            prune_budget=float(max(0, self.cfg.d_reservoir - eligible)),
+        )
+
     # ---- state init ------------------------------------------------------
 
     def init_state(self, batch: int = 1) -> ControllerState:
@@ -77,6 +156,8 @@ class PrismHCLite(nn.Module):
             P=torch.ones(batch, device=device, dtype=dtype),
             dwell_counter=torch.zeros(batch, dtype=torch.long, device=device),
             commits=0,
+            reservoir=self._new_reservoir_state(batch, device, dtype),
+            topology=self._new_topology_state(),
         )
 
     def init_belief(self, batch: int = 1) -> BeliefState:
@@ -91,6 +172,7 @@ class PrismHCLite(nn.Module):
         )
 
     def reset_episode(self, state: ControllerState) -> ControllerState:
+        state = self._ensure_route_state(state, batch=state.E.shape[0])
         for l in state.R_l:
             state.R_l[l].zero_()
         state.alpha.zero_()
@@ -101,6 +183,10 @@ class PrismHCLite(nn.Module):
         state.chi.zero_()
         state.P.fill_(1.0)
         state.dwell_counter.zero_()
+        state.reservoir.route_health.fill_(1.0)
+        state.reservoir.hits.zero_()
+        state.reservoir.active_paths.zero_()
+        state.topology = self._new_topology_state()
         return state
 
     # ---- forward ---------------------------------------------------------
@@ -112,6 +198,7 @@ class PrismHCLite(nn.Module):
         belief_prev: BeliefState,
     ) -> Tuple[torch.Tensor, ControllerState, BeliefState, StepRecord]:
         cfg = self.cfg
+        state = self._ensure_route_state(state, batch=x.shape[0])
 
         # (1) bottom-up + (2) anchor coords / drift
         h_dict = self.hierarchy.bottom_up(x)
@@ -134,7 +221,14 @@ class PrismHCLite(nn.Module):
             )
 
         # (5) reservoir-routed features + PGSTR mixing per layer
-        routed = self.reservoir(x)
+        routed, route_features, active_paths = self.reservoir.route(
+            x,
+            state.reservoir,
+            top_k=cfg.route_top_k,
+            prune_threshold=cfg.route_prune_threshold,
+        )
+        route_entropy = self.reservoir.route_entropy(route_features, active_paths)
+        self._refresh_topology(state)
         mu_l: Dict[int, torch.Tensor] = {}
         pred_l: Dict[int, torch.Tensor] = {}
         for l in range(cfg.L):
@@ -184,6 +278,16 @@ class PrismHCLite(nn.Module):
         # and demo assertions that consume r.cbf.
         delta_eff = cfg.cbf_delta + cfg.cbf_robust_gamma
         cbf = state.S - cfg.cbf_a * state.E.pow(cfg.cbf_p) - delta_eff
+        cbf_mean = float(cbf.mean().item())
+        dwell = int(state.dwell_counter.min().item())
+        if cbf_mean <= 1e-6:
+            intervention = "cbf_boundary"
+        elif dwell < cfg.dwell_min:
+            intervention = "latch_closed"
+        else:
+            intervention = "none"
+        y = self.hierarchy.readout(mu_l[cfg.L - 1])
+        y, decode_vetoes = self.apply_decoder_gate(y, safety)
         rec = StepRecord(
             R=float(state.R_l[0].mean().item()),
             E=float(state.E.mean().item()),
@@ -194,12 +298,57 @@ class PrismHCLite(nn.Module):
             h=float(state.h.mean().item()),
             F=float(F.detach().item()),
             drift=float(safety.drift.detach().item()),
-            cbf=float(cbf.mean().item()),
-            dwell=int(state.dwell_counter.min().item()),
+            cbf=cbf_mean,
+            dwell=dwell,
+            canary_margin=safety.canary_margin,
+            active_paths=state.topology.active_edges if state.topology else 0,
+            topology_mass=(
+                state.topology.topology_mass if state.topology else 0.0
+            ),
+            route_entropy=float(route_entropy.item()),
+            controller_intervention=intervention,
+            decode_vetoes=decode_vetoes,
         )
 
-        y = self.hierarchy.readout(mu_l[cfg.L - 1])
         return y, state, belief, rec
+
+    # ---- post-score routing / decoder gate -------------------------------
+
+    def apply_decoder_gate(
+        self, y: torch.Tensor, safety: SafetyState
+    ) -> Tuple[torch.Tensor, int]:
+        cfg = self.cfg
+        if (
+            not cfg.decoder_veto_indices
+            or cfg.decoder_veto_penalty <= 0.0
+            or safety.canary_margin >= cfg.decoder_canary_threshold
+        ):
+            return y, 0
+
+        idx = torch.tensor(cfg.decoder_veto_indices, device=y.device)
+        gated = y.clone()
+        gated[..., idx] = gated[..., idx] - cfg.decoder_veto_penalty
+        safety.veto_logits = gated[..., idx].detach()
+        batch = 1 if y.dim() == 1 else y.reshape(-1, y.shape[-1]).shape[0]
+        return gated, int(batch * idx.numel())
+
+    @torch.no_grad()
+    def post_score_update(
+        self, state: ControllerState, reward: torch.Tensor
+    ) -> ControllerState:
+        batch = 1
+        if state.reservoir is not None and state.reservoir.active_paths.dim() == 2:
+            batch = state.reservoir.active_paths.shape[0]
+        state = self._ensure_route_state(state, batch=batch)
+        state.reservoir = self.reservoir.update_health(
+            state.reservoir,
+            reward=reward,
+            decay=self.cfg.route_health_decay,
+            reward_rate=self.cfg.route_health_reward_rate,
+            floor=self.cfg.route_health_floor,
+        )
+        self._refresh_topology(state)
+        return state
 
     # ---- plasticity -------------------------------------------------------
 

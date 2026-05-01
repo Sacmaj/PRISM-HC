@@ -25,7 +25,7 @@ class BeliefState:
 
 @dataclass
 class TopologyState:
-    """Routing-graph bookkeeping. Unused in lite pass; reserved for growth/prune."""
+    """Routing-graph bookkeeping for bounded route activation."""
     active_edges: int
     topology_mass: float
     birth_budget: float
@@ -43,7 +43,7 @@ class SafetyState:
 
 @dataclass
 class ReservoirState:
-    """State for the gradient-free seeded tensor router. Reserved for Hebbian."""
+    """State for the gradient-free seeded tensor router."""
     route_health: torch.Tensor
     hits: torch.Tensor
     active_paths: torch.Tensor
@@ -66,3 +66,5 @@ class ControllerState:
         default_factory=lambda: torch.zeros(1, dtype=torch.long)
     )
     commits: int = 0
+    reservoir: Optional[ReservoirState] = None
+    topology: Optional[TopologyState] = None
