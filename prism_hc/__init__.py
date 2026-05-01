@@ -15,6 +15,7 @@ from .adapter import NullSpaceAdapter
 from .hierarchy import BeliefHierarchy
 from .model import PrismHCLite
 from .telemetry import CommitRecord, StepRecord, TelemetryRecorder
+from .interfaces import PlasticityController, Router, SafetyAnchorCore
 
 __all__ = [
     "PrismConfig",
@@ -32,4 +33,7 @@ __all__ = [
     "CommitRecord",
     "StepRecord",
     "TelemetryRecorder",
+    "PlasticityController",
+    "Router",
+    "SafetyAnchorCore",
 ]

@@ -93,6 +93,20 @@ class PrismConfig:
     lam_h: float = 0.03
     eta_h: float = 0.05
 
+    # Sparse reservoir routing / post-score health. route_top_k=None preserves
+    # the existing dense reservoir path; tests can opt into bounded top-k.
+    route_top_k: Optional[int] = None
+    route_health_decay: float = 0.02
+    route_health_reward_rate: float = 0.05
+    route_health_floor: float = 0.05
+    route_prune_threshold: float = 0.01
+
+    # Canary-conditioned decoder veto. Empty indices / zero penalty are a
+    # no-op, preserving current readout behavior by default.
+    decoder_veto_indices: Tuple[int, ...] = ()
+    decoder_veto_penalty: float = 0.0
+    decoder_canary_threshold: float = 0.0
+
     # Precision modulation per-layer. Accepts a scalar (broadcast to all L
     # layers), a 1-tuple (broadcast), or a tuple of length L; normalized to a
     # length-L tuple by __post_init__.
@@ -132,6 +146,40 @@ class PrismConfig:
                 f"{{S in [0,1] : S - cbf_a*E^p >= delta_eff}} would be empty, "
                 f"so LATCH could never commit. Most likely cause: the upstream "
                 f"synthesizer emitted a misconverged Gamma."
+            )
+        if self.route_top_k is not None:
+            self.route_top_k = int(self.route_top_k)
+            if self.route_top_k <= 0 or self.route_top_k > self.d_reservoir:
+                raise ValueError(
+                    f"route_top_k must be in [1, d_reservoir] or None "
+                    f"(got {self.route_top_k}, d_reservoir={self.d_reservoir})."
+                )
+        for name in (
+            "route_health_decay",
+            "route_health_reward_rate",
+            "route_health_floor",
+            "route_prune_threshold",
+            "decoder_veto_penalty",
+        ):
+            if getattr(self, name) < 0.0:
+                raise ValueError(f"{name} must be >= 0.")
+        if self.route_health_decay > 1.0:
+            raise ValueError("route_health_decay must be <= 1.")
+        for name in ("route_health_floor", "route_prune_threshold"):
+            if getattr(self, name) > 1.0:
+                raise ValueError(f"{name} must be <= 1.")
+        if not 0.0 <= self.decoder_canary_threshold <= 1.0:
+            raise ValueError("decoder_canary_threshold must be in [0, 1].")
+        self.decoder_veto_indices = tuple(
+            dict.fromkeys(int(i) for i in self.decoder_veto_indices)
+        )
+        bad_indices = [
+            i for i in self.decoder_veto_indices if i < 0 or i >= self.d_in
+        ]
+        if bad_indices:
+            raise ValueError(
+                f"decoder_veto_indices out of range for d_in={self.d_in}: "
+                f"{bad_indices}"
             )
 
     def _normalize_per_layer(
